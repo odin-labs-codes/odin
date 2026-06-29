@@ -1,0 +1,25 @@
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.24;
+
+/**
+ * @title IERC20Extensions
+ * @notice Discovery surface for the extensions a token has installed.
+ *
+ * @dev The set returned by {extensions} is fixed in the constructor and can never change. That immutability
+ *      is the whole point: an integrator can read it once, cache it next to the token address, and never
+ *      re-check. A set that could grow after deployment would have to be re-read before every interaction,
+ *      which costs more than it saves and earns no trust.
+ */
+interface IERC20Extensions {
+    /// @notice The extension is not installed on this token.
+    error ERC20ExtensionNotEnabled(bytes4 extensionId);
+
+    /**
+     * @notice The identifiers of every extension installed on this token.
+     * @dev Fixed at deployment. Order is the order of installation and is also fixed.
+     */
+    function extensions() external view returns (bytes4[] memory);
+
+    /// @notice Whether a specific extension is installed. Fixed at deployment.
+    function hasExtension(bytes4 extensionId) external view returns (bool);
+}
