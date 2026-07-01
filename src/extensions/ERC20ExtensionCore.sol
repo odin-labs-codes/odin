@@ -24,9 +24,16 @@ abstract contract ERC20ExtensionCore is Initializable, ERC20Upgradeable, IERC20E
     bytes4[] private _extensionIds;
     mapping(bytes4 id => bool) private _extensionEnabled;
     uint256 private _behaviorFlags;
+    bool private _extensionsSealed;
 
     /// @notice The same extension was registered twice.
     error ERC20ExtensionAlreadyRegistered(bytes4 extensionId);
+
+    /// @notice The extension set was already sealed; registration is only possible during construction.
+    error ERC20ExtensionSetSealed();
+
+    /// @notice The token's discovery surface was read before the assembly called `_sealExtensions()`.
+    error ERC20ExtensionSetNotSealed();
 
     /// @notice A behaviour bit outside `BehaviorFlags.ALL` was declared.
     error ERC20UnknownBehaviorFlag(uint256 flags);
@@ -35,6 +42,7 @@ abstract contract ERC20ExtensionCore is Initializable, ERC20Upgradeable, IERC20E
 
     /// @dev Registers one extension and the behaviours it brings. Called from a module's initialiser.
     function _registerExtension(bytes4 extensionId, uint256 flags) internal onlyInitializing {
+        if (_extensionsSealed) revert ERC20ExtensionSetSealed();
         if (_extensionEnabled[extensionId]) revert ERC20ExtensionAlreadyRegistered(extensionId);
         if (flags & ~BehaviorFlags.ALL != 0) revert ERC20UnknownBehaviorFlag(flags);
 
@@ -43,19 +51,39 @@ abstract contract ERC20ExtensionCore is Initializable, ERC20Upgradeable, IERC20E
         _behaviorFlags |= flags;
     }
 
+    /**
+     * @notice Freezes the extension set.
+     * @dev **Every assembly must call this as the last step of its constructor or initialiser.** Until it
+     *      does, {extensions}, {hasExtension} and {behaviorFlags} all revert, so an assembly that forgets has
+     *      no discovery surface at all rather than a quietly incomplete one. Checking a flag on the transfer
+     *      path instead would tax every transfer forever to catch a mistake that can only be made once, at
+     *      deployment.
+     */
+    function _sealExtensions() internal onlyInitializing {
+        if (_extensionsSealed) revert ERC20ExtensionSetSealed();
+        _extensionsSealed = true;
+    }
+
     /// @inheritdoc IERC20Extensions
     function extensions() public view virtual returns (bytes4[] memory) {
+        _requireSealed();
         return _extensionIds;
     }
 
     /// @inheritdoc IERC20Extensions
     function hasExtension(bytes4 extensionId) public view virtual returns (bool) {
+        _requireSealed();
         return _extensionEnabled[extensionId];
     }
 
     /// @inheritdoc IERC20Behavior
     function behaviorFlags() public view virtual returns (uint256) {
+        _requireSealed();
         return _behaviorFlags;
+    }
+
+    function _requireSealed() private view {
+        if (!_extensionsSealed) revert ERC20ExtensionSetNotSealed();
     }
 
     /**
