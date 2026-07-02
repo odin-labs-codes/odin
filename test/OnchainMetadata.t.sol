@@ -28,6 +28,71 @@ contract OnchainMetadataTest is BaseTest {
         assertEq(token.getMetadata("issuer"), "");
     }
 
+    function test_KeysAreEnumerable() public {
+        vm.startPrank(admin);
+        token.setMetadata("a", "1");
+        token.setMetadata("b", "2");
+        vm.stopPrank();
+
+        assertEq(token.metadataKeyCount(), 2);
+        assertEq(token.metadataKeyAt(0), "a");
+        assertEq(token.metadataKeyAt(1), "b");
+        assertEq(token.metadataKeys().length, 2);
+    }
+
+    function test_OverwritingDoesNotDuplicateTheKey() public {
+        vm.startPrank(admin);
+        token.setMetadata("a", "1");
+        token.setMetadata("a", "2");
+        vm.stopPrank();
+
+        assertEq(token.metadataKeyCount(), 1);
+        assertEq(token.getMetadata("a"), "2");
+    }
+
+    function test_RemoveDropsTheKeyAndItsValue() public {
+        vm.startPrank(admin);
+        token.setMetadata("a", "1");
+        token.setMetadata("b", "2");
+        token.removeMetadata("a");
+        vm.stopPrank();
+
+        assertEq(token.metadataKeyCount(), 1);
+        assertEq(token.metadataKeyAt(0), "b");
+        assertEq(token.getMetadata("a"), "");
+    }
+
+    function test_RemoveTheLastKey() public {
+        vm.startPrank(admin);
+        token.setMetadata("a", "1");
+        token.removeMetadata("a");
+        vm.stopPrank();
+
+        assertEq(token.metadataKeyCount(), 0);
+    }
+
+    function test_ReAddingAfterRemovalWorks() public {
+        vm.startPrank(admin);
+        token.setMetadata("a", "1");
+        token.removeMetadata("a");
+        token.setMetadata("a", "3");
+        vm.stopPrank();
+
+        assertEq(token.metadataKeyCount(), 1);
+        assertEq(token.getMetadata("a"), "3");
+    }
+
+    function test_RevertWhen_RemovingAKeyThatIsNotThere() public {
+        vm.expectRevert(abi.encodeWithSelector(IERC20OnchainMetadata.ERC20MetadataKeyNotFound.selector, "nope"));
+        vm.prank(admin);
+        token.removeMetadata("nope");
+    }
+
+    function test_RevertWhen_KeyIndexIsPastTheEnd() public {
+        vm.expectRevert(abi.encodeWithSelector(IERC20OnchainMetadata.ERC20MetadataIndexOutOfBounds.selector, 0, 0));
+        token.metadataKeyAt(0);
+    }
+
     function test_Events() public {
         vm.expectEmit(true, false, false, true, address(token));
         emit IERC20OnchainMetadata.MetadataUpdated(keccak256("website"), "website", "https://example.com");
