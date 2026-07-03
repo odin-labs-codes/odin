@@ -3,11 +3,16 @@ pragma solidity ^0.8.24;
 
 /**
  * @title IERC20OnchainMetadata
- * @notice Enumerable key/value metadata stored on chain.
+ * @notice Enumerable key/value metadata stored on chain, with an ERC-1046 `tokenURI` alongside it.
  *
- * @dev Storing strings on chain is the kind of expensive that stopped mattering on L2. Storing them off
+ * @dev **Precedence: the on-chain key/value store is authoritative.** If a key appears both here and in the
+ *      JSON document at {tokenURI}, the value returned by {getMetadata} wins and the document's value must
+ *      be ignored. The URI exists for data that is genuinely too large or too rich for storage — artwork,
+ *      long descriptions, external links — and as a compatibility path for ERC-1046 consumers.
+ *
+ *      Storing strings on chain is the kind of expensive that stopped mattering on L2. Storing them off
  *      chain behind a URL is the kind of cheap that costs an integrator a fetch, a parse, and a trust
- *      assumption. This extension makes the on-chain copy the default.
+ *      assumption. This extension makes the on-chain copy the default and the URI the fallback.
  */
 interface IERC20OnchainMetadata {
     /// @notice A metadata key must be a non-empty string.
@@ -33,6 +38,9 @@ interface IERC20OnchainMetadata {
     /// @notice Emitted when a key is deleted from the on-chain store. Carries the key for the same reason.
     event MetadataRemoved(bytes32 indexed keyHash, string key);
 
+    /// @notice Emitted when the ERC-1046 token URI changes.
+    event TokenURIUpdated(string tokenURI);
+
     /// @notice The value for `key`, or the empty string if the key is not present.
     function getMetadata(string calldata key) external view returns (string memory);
 
@@ -50,4 +58,10 @@ interface IERC20OnchainMetadata {
 
     /// @notice The key at `index`. Reverts past the end; indices shift when a key is removed.
     function metadataKeyAt(uint256 index) external view returns (string memory);
+
+    /**
+     * @notice ERC-1046 metadata document URI.
+     * @dev Secondary to the on-chain store; see the note on precedence above.
+     */
+    function tokenURI() external view returns (string memory);
 }

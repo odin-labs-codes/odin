@@ -21,6 +21,7 @@ abstract contract ERC20OnchainMetadata is ERC20ExtensionCore, IERC20OnchainMetad
     string[] private _keys;
     mapping(string key => uint256 indexPlusOne) private _keyIndex;
     mapping(string key => string value) private _values;
+    string private _uri;
 
     function __ERC20OnchainMetadata_init() internal onlyInitializing {
         _registerExtension(ExtensionIds.ONCHAIN_METADATA, 0);
@@ -49,6 +50,11 @@ abstract contract ERC20OnchainMetadata is ERC20ExtensionCore, IERC20OnchainMetad
     function metadataKeyAt(uint256 index) external view virtual returns (string memory) {
         if (index >= _keys.length) revert ERC20MetadataIndexOutOfBounds(index, _keys.length);
         return _keys[index];
+    }
+
+    /// @inheritdoc IERC20OnchainMetadata
+    function tokenURI() external view virtual returns (string memory) {
+        return _uri;
     }
 
     // -----------------------------------------------------------------------------------------------
@@ -88,5 +94,14 @@ abstract contract ERC20OnchainMetadata is ERC20ExtensionCore, IERC20OnchainMetad
         delete _values[key];
 
         emit MetadataRemoved(keccak256(bytes(key)), key);
+    }
+
+    /// @notice Sets the ERC-1046 metadata document URI. Secondary to the on-chain store.
+    function setTokenURI(string calldata newTokenURI) external virtual {
+        _authorizeExtensionConfig(ExtensionIds.ONCHAIN_METADATA);
+
+        _uri = newTokenURI;
+
+        emit TokenURIUpdated(newTokenURI);
     }
 }

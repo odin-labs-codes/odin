@@ -93,6 +93,16 @@ contract OnchainMetadataTest is BaseTest {
         token.metadataKeyAt(0);
     }
 
+    function test_TokenUriIsSeparateFromTheKeyValueStore() public {
+        vm.startPrank(admin);
+        token.setTokenURI("ipfs://document");
+        token.setMetadata("website", "https://example.com");
+        vm.stopPrank();
+
+        assertEq(token.tokenURI(), "ipfs://document");
+        assertEq(token.metadataKeyCount(), 1);
+    }
+
     function test_Events() public {
         vm.expectEmit(true, false, false, true, address(token));
         emit IERC20OnchainMetadata.MetadataUpdated(keccak256("website"), "website", "https://example.com");
