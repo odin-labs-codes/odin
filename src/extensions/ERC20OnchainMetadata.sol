@@ -57,6 +57,14 @@ abstract contract ERC20OnchainMetadata is ERC20ExtensionCore, IERC20OnchainMetad
         return _uri;
     }
 
+    /// @inheritdoc ERC20ExtensionCore
+    function _extensionData(bytes4 extensionId) internal view virtual override returns (bytes memory) {
+        if (extensionId == ExtensionIds.ONCHAIN_METADATA) {
+            return abi.encode(_uri, _keys.length);
+        }
+        return super._extensionData(extensionId);
+    }
+
     // -----------------------------------------------------------------------------------------------
     // Configuration
     // -----------------------------------------------------------------------------------------------
@@ -73,6 +81,7 @@ abstract contract ERC20OnchainMetadata is ERC20ExtensionCore, IERC20OnchainMetad
         _values[key] = value;
 
         emit MetadataUpdated(keccak256(bytes(key)), key, value);
+        _emitExtensionConfigured(ExtensionIds.ONCHAIN_METADATA);
     }
 
     /// @notice Deletes `key` from the store. Reverts if it is not present.
@@ -94,6 +103,7 @@ abstract contract ERC20OnchainMetadata is ERC20ExtensionCore, IERC20OnchainMetad
         delete _values[key];
 
         emit MetadataRemoved(keccak256(bytes(key)), key);
+        _emitExtensionConfigured(ExtensionIds.ONCHAIN_METADATA);
     }
 
     /// @notice Sets the ERC-1046 metadata document URI. Secondary to the on-chain store.
@@ -103,5 +113,6 @@ abstract contract ERC20OnchainMetadata is ERC20ExtensionCore, IERC20OnchainMetad
         _uri = newTokenURI;
 
         emit TokenURIUpdated(newTokenURI);
+        _emitExtensionConfigured(ExtensionIds.ONCHAIN_METADATA);
     }
 }

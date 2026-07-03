@@ -111,6 +111,15 @@ abstract contract ERC20ExtensionCore is Initializable, ERC20Upgradeable, IERC20E
         _extensionsSealed = true;
     }
 
+    /// @dev Emits {ExtensionConfigured} carrying the extension's full configuration after the change.
+    function _emitExtensionConfigured(bytes4 extensionId) internal {
+        emit ExtensionConfigured(extensionId, extensionData(extensionId));
+    }
+
+    // -----------------------------------------------------------------------------------------------
+    // Discovery
+    // -----------------------------------------------------------------------------------------------
+
     /// @inheritdoc IERC20Extensions
     function extensions() public view virtual returns (bytes4[] memory) {
         _requireSealed();
@@ -121,6 +130,29 @@ abstract contract ERC20ExtensionCore is Initializable, ERC20Upgradeable, IERC20E
     function hasExtension(bytes4 extensionId) public view virtual returns (bool) {
         _requireSealed();
         return _extensionEnabled[extensionId];
+    }
+
+    /**
+     * @inheritdoc IERC20Extensions
+     * @dev Deliberately not `virtual`. The seal check and the not-installed check belong to every call, and
+     *      a module overriding the public function would answer for its own ID before either one ran —
+     *      which is exactly how a token with an unsealed registry could still look configured. Modules
+     *      extend {_extensionData} instead, which this reaches only after both checks have passed.
+     */
+    function extensionData(bytes4 extensionId) public view returns (bytes memory) {
+        _requireSealed();
+        if (!_extensionEnabled[extensionId]) revert ERC20ExtensionNotEnabled(extensionId);
+        return _extensionData(extensionId);
+    }
+
+    /**
+     * @dev Modules override this to return their own configuration and delegate everything else upward.
+     *      Reaching the base case means the ID belongs to an installed module that has nothing to report,
+     *      so empty bytes is the right answer — "installed but unconfigured" stays distinguishable from
+     *      "not installed", which reverts one level up.
+     */
+    function _extensionData(bytes4) internal view virtual returns (bytes memory) {
+        return "";
     }
 
     /// @inheritdoc IERC20Behavior
