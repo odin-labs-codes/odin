@@ -18,4 +18,7 @@ library ExtensionIds {
 
     /// @notice A fee withheld from every transfer.
     bytes4 internal constant TRANSFER_FEE = bytes4(keccak256("erc20.extension.transferFee"));
+
+    /// @notice ERC-1404 style transfer restrictions.
+    bytes4 internal constant TRANSFER_RESTRICTION = bytes4(keccak256("erc20.extension.transferRestriction"));
 }
