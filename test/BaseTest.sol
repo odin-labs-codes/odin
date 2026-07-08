@@ -24,4 +24,14 @@ abstract contract BaseTest is Test {
         token.mint(bob, INITIAL_BALANCE);
         vm.stopPrank();
     }
+
+    function _setFrozen(address account, bool frozen) internal {
+        vm.prank(admin);
+        token.setFrozen(account, frozen);
+    }
+
+    function _setPaused(bool paused) internal {
+        vm.prank(admin);
+        token.setTransfersPaused(paused);
+    }
 }

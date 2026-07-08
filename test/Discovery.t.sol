@@ -12,9 +12,11 @@ contract DiscoveryTest is BaseTest {
     function test_InstalledExtensionsAreReported() public view {
         bytes4[] memory ids = token.extensions();
 
-        assertEq(ids.length, 1);
+        assertEq(ids.length, 2);
         assertEq(ids[0], ExtensionIds.ONCHAIN_METADATA);
+        assertEq(ids[1], ExtensionIds.TRANSFER_RESTRICTION);
         assertTrue(token.hasExtension(ExtensionIds.ONCHAIN_METADATA));
+        assertTrue(token.hasExtension(ExtensionIds.TRANSFER_RESTRICTION));
     }
 
     function test_UninstalledExtensionIsNotReported() public view {

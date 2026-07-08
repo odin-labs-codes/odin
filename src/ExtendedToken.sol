@@ -5,6 +5,7 @@ import {AccessControlUpgradeable} from "@openzeppelin/contracts-upgradeable/acce
 
 import {ERC20ExtensionCore} from "./extensions/ERC20ExtensionCore.sol";
 import {ERC20OnchainMetadata} from "./extensions/ERC20OnchainMetadata.sol";
+import {ERC20TransferRestriction} from "./extensions/ERC20TransferRestriction.sol";
 import {ExtensionIds} from "./libraries/ExtensionIds.sol";
 
 /**
@@ -26,12 +27,15 @@ import {ExtensionIds} from "./libraries/ExtensionIds.sol";
  *      The constructor grants every role to `admin` so that a deployment is usable immediately. Splitting
  *      them across separate keys is the expected next step.
  */
-contract ExtendedToken is ERC20OnchainMetadata, AccessControlUpgradeable {
+contract ExtendedToken is ERC20OnchainMetadata, ERC20TransferRestriction, AccessControlUpgradeable {
     /// @notice Creates and destroys supply.
     bytes32 public constant SUPPLY_ROLE = keccak256("berc.role.SUPPLY");
 
     /// @notice Writes the on-chain metadata store.
     bytes32 public constant METADATA_ROLE = keccak256("berc.role.METADATA");
+
+    /// @notice Pauses transfers and freezes accounts.
+    bytes32 public constant RESTRICTION_ROLE = keccak256("berc.role.RESTRICTION");
 
     /// @notice The admin cannot be the zero address; the token would have no reachable authority.
     error ExtendedTokenInvalidAdmin();
@@ -58,10 +62,12 @@ contract ExtendedToken is ERC20OnchainMetadata, AccessControlUpgradeable {
         __AccessControl_init();
         __ERC20ExtensionCore_init();
         __ERC20OnchainMetadata_init();
+        __ERC20TransferRestriction_init();
 
         _grantRole(DEFAULT_ADMIN_ROLE, admin);
         _grantRole(SUPPLY_ROLE, admin);
         _grantRole(METADATA_ROLE, admin);
+        _grantRole(RESTRICTION_ROLE, admin);
 
         // Fixes the extension set. Must be last.
         _sealExtensions();
@@ -77,10 +83,40 @@ contract ExtendedToken is ERC20OnchainMetadata, AccessControlUpgradeable {
         _burn(from, value);
     }
 
+    // -----------------------------------------------------------------------------------------------
+    // Linearisation plumbing
+    //
+    // Solidity requires a contract to restate any function it inherits from two or more sibling bases, even
+    // when it has nothing to add. Each of these forwards straight to `super`, which walks the full chain in
+    // the order C3 produced. They are bookkeeping, not behaviour: the transfer phase order is decided in
+    // `ERC20ExtensionCore._update` and none of these can alter it.
+    // -----------------------------------------------------------------------------------------------
+
+    function _checkTransferAllowed(address from, address to, uint256 value)
+        internal
+        view
+        virtual
+        override(ERC20ExtensionCore, ERC20TransferRestriction)
+    {
+        super._checkTransferAllowed(from, to, value);
+    }
+
+    function _extensionData(bytes4 extensionId)
+        internal
+        view
+        virtual
+        override(ERC20OnchainMetadata, ERC20TransferRestriction)
+        returns (bytes memory)
+    {
+        return super._extensionData(extensionId);
+    }
+
     /// @inheritdoc ERC20ExtensionCore
     function _authorizeExtensionConfig(bytes4 extensionId) internal view virtual override {
         if (extensionId == ExtensionIds.ONCHAIN_METADATA) {
             _checkRole(METADATA_ROLE);
+        } else if (extensionId == ExtensionIds.TRANSFER_RESTRICTION) {
+            _checkRole(RESTRICTION_ROLE);
         } else {
             revert ERC20ExtensionNotEnabled(extensionId);
         }
