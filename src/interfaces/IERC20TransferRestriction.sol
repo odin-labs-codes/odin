@@ -21,6 +21,9 @@ interface IERC20TransferRestriction {
     /// @notice Emitted when transfers are globally paused or unpaused.
     event TransferPauseUpdated(bool paused);
 
+    /// @notice Emitted when an individual account is frozen or unfrozen.
+    event AccountFrozen(address indexed account, bool frozen);
+
     /**
      * @notice Whether this transfer would be rejected, and why.
      * @return restrictionCode `0` if the transfer is allowed; any other value is a rejection reason.

@@ -8,7 +8,7 @@ import {ERC20ExtensionCore} from "./ERC20ExtensionCore.sol";
 
 /**
  * @title ERC20TransferRestriction
- * @notice A global pause, exposed through ERC-1404's two functions.
+ * @notice A global pause and a per-account freeze, exposed through ERC-1404's two functions.
  *
  * @dev The check runs in phase 1, before anything has moved or been emitted: a transfer that is not allowed
  *      to happen must leave no trace of having been attempted.
@@ -20,10 +20,17 @@ abstract contract ERC20TransferRestriction is ERC20ExtensionCore, IERC20Transfer
     /// @notice All transfers are currently paused.
     uint8 public constant RESTRICTION_PAUSED = 1;
 
+    /// @notice The sending account is frozen.
+    uint8 public constant RESTRICTION_SENDER_FROZEN = 2;
+
+    /// @notice The receiving account is frozen.
+    uint8 public constant RESTRICTION_RECIPIENT_FROZEN = 3;
+
     bool private _paused;
+    mapping(address account => bool frozen) private _frozen;
 
     function __ERC20TransferRestriction_init() internal onlyInitializing {
-        _registerExtension(ExtensionIds.TRANSFER_RESTRICTION, BehaviorFlags.PAUSABLE);
+        _registerExtension(ExtensionIds.TRANSFER_RESTRICTION, BehaviorFlags.PAUSABLE | BehaviorFlags.BLOCKLIST);
     }
 
     // -----------------------------------------------------------------------------------------------
@@ -31,8 +38,10 @@ abstract contract ERC20TransferRestriction is ERC20ExtensionCore, IERC20Transfer
     // -----------------------------------------------------------------------------------------------
 
     /// @inheritdoc IERC20TransferRestriction
-    function detectTransferRestriction(address, address, uint256) public view virtual returns (uint8) {
+    function detectTransferRestriction(address from, address to, uint256) public view virtual returns (uint8) {
         if (_paused) return RESTRICTION_PAUSED;
+        if (_frozen[from]) return RESTRICTION_SENDER_FROZEN;
+        if (_frozen[to]) return RESTRICTION_RECIPIENT_FROZEN;
         return RESTRICTION_OK;
     }
 
@@ -40,12 +49,19 @@ abstract contract ERC20TransferRestriction is ERC20ExtensionCore, IERC20Transfer
     function messageForTransferRestriction(uint8 restrictionCode) public view virtual returns (string memory) {
         if (restrictionCode == RESTRICTION_OK) return "Transfer allowed";
         if (restrictionCode == RESTRICTION_PAUSED) return "Transfers are paused";
+        if (restrictionCode == RESTRICTION_SENDER_FROZEN) return "Sender account is frozen";
+        if (restrictionCode == RESTRICTION_RECIPIENT_FROZEN) return "Recipient account is frozen";
         return "Unknown restriction code";
     }
 
     /// @notice Whether all transfers are currently paused.
     function transfersPaused() public view virtual returns (bool) {
         return _paused;
+    }
+
+    /// @notice Whether `account` is frozen.
+    function isFrozen(address account) public view virtual returns (bool) {
+        return _frozen[account];
     }
 
     /// @inheritdoc ERC20ExtensionCore
@@ -79,5 +95,19 @@ abstract contract ERC20TransferRestriction is ERC20ExtensionCore, IERC20Transfer
 
         emit TransferPauseUpdated(paused);
         _emitExtensionConfigured(ExtensionIds.TRANSFER_RESTRICTION);
+    }
+
+    /**
+     * @notice Freezes or unfreezes one account.
+     * @dev No {ExtensionConfigured} for this one: it is per-account rather than token-level, and duplicating
+     *      each freeze into the generic event would double the log cost of every compliance action to carry
+     *      what {AccountFrozen} already carried.
+     */
+    function setFrozen(address account, bool frozen) external virtual {
+        _authorizeExtensionConfig(ExtensionIds.TRANSFER_RESTRICTION);
+
+        _frozen[account] = frozen;
+
+        emit AccountFrozen(account, frozen);
     }
 }
