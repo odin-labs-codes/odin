@@ -65,6 +65,27 @@ contract TransferRestrictionTest is BaseTest {
         token.transfer(bob, 1e18);
     }
 
+    function test_BurnWorksOnAFrozenAccount() public {
+        _setFrozen(alice, true);
+
+        vm.prank(admin);
+        token.burn(alice, 1e18);
+
+        assertEq(token.balanceOf(alice), INITIAL_BALANCE - 1e18);
+    }
+
+    function test_MintingToAFrozenAccountIsRejected() public {
+        _setFrozen(carol, true);
+
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                IERC20TransferRestriction.ERC20TransferRestricted.selector, token.RESTRICTION_RECIPIENT_FROZEN()
+            )
+        );
+        vm.prank(admin);
+        token.mint(carol, 1e18);
+    }
+
     function test_UnfreezingRestoresTheAccount() public {
         _setFrozen(alice, true);
         _setFrozen(alice, false);

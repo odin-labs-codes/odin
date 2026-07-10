@@ -10,13 +10,25 @@ import {ERC20ExtensionCore} from "./ERC20ExtensionCore.sol";
  * @title ERC20TransferRestriction
  * @notice A global pause and a per-account freeze, exposed through ERC-1404's two functions.
  *
- * @dev The check runs in phase 1, before anything has moved or been emitted: a transfer that is not allowed
- *      to happen must leave no trace of having been attempted.
+ * @dev ## Pause and freeze are transfer controls, not supply controls
  *
- *      **Pause does not stop mint or burn.** A pause is an emergency brake on circulation. If it also froze
- *      supply, the authority that pulled it would lose the ability to correct whatever caused it — the token
- *      would be bricked precisely when it most needs intervention. Mint and burn reach phase 1 with a zero
- *      address on one side, which is how the two cases are told apart.
+ *      | flow                     | paused    | sender frozen | recipient frozen |
+ *      | ------------------------ | --------- | ------------- | ---------------- |
+ *      | transfer (both non-zero) | rejected  | rejected      | rejected         |
+ *      | mint (`from == 0`)       | allowed   | n/a           | rejected         |
+ *      | burn (`to == 0`)         | allowed   | allowed       | n/a              |
+ *
+ *      Two deliberate asymmetries:
+ *
+ *      - **Pause does not stop mint or burn.** A pause is an emergency brake on circulation. If it also
+ *        froze supply, the authority that pulled it would lose the ability to correct whatever caused it —
+ *        the token would be bricked precisely when it most needs intervention.
+ *      - **Burn works on a frozen account.** Freezing is what an issuer does before seizing; if a burn from
+ *        a frozen account reverted, the freeze would have to be lifted first, which is exactly the window
+ *        the freeze exists to close. Minting *to* a frozen account is still rejected, because crediting an
+ *        account nobody may transact with is a mistake with no upside.
+ *
+ *      This module declares both `PAUSABLE` and `BLOCKLIST`, since it provides both.
  */
 abstract contract ERC20TransferRestriction is ERC20ExtensionCore, IERC20TransferRestriction {
     /// @notice The transfer is allowed.
@@ -44,11 +56,14 @@ abstract contract ERC20TransferRestriction is ERC20ExtensionCore, IERC20Transfer
 
     /// @inheritdoc IERC20TransferRestriction
     function detectTransferRestriction(address from, address to, uint256) public view virtual returns (uint8) {
-        // A zero address on either side means supply is being created or destroyed, not moved.
-        if (from != address(0) && to != address(0) && _paused) return RESTRICTION_PAUSED;
+        if (from != address(0) && to != address(0)) {
+            if (_paused) return RESTRICTION_PAUSED;
+            if (_frozen[from]) return RESTRICTION_SENDER_FROZEN;
+            if (_frozen[to]) return RESTRICTION_RECIPIENT_FROZEN;
+        } else if (from == address(0) && _frozen[to]) {
+            return RESTRICTION_RECIPIENT_FROZEN;
+        }
 
-        if (_frozen[from]) return RESTRICTION_SENDER_FROZEN;
-        if (_frozen[to]) return RESTRICTION_RECIPIENT_FROZEN;
         return RESTRICTION_OK;
     }
 
