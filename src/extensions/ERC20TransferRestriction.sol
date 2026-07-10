@@ -12,6 +12,11 @@ import {ERC20ExtensionCore} from "./ERC20ExtensionCore.sol";
  *
  * @dev The check runs in phase 1, before anything has moved or been emitted: a transfer that is not allowed
  *      to happen must leave no trace of having been attempted.
+ *
+ *      **Pause does not stop mint or burn.** A pause is an emergency brake on circulation. If it also froze
+ *      supply, the authority that pulled it would lose the ability to correct whatever caused it — the token
+ *      would be bricked precisely when it most needs intervention. Mint and burn reach phase 1 with a zero
+ *      address on one side, which is how the two cases are told apart.
  */
 abstract contract ERC20TransferRestriction is ERC20ExtensionCore, IERC20TransferRestriction {
     /// @notice The transfer is allowed.
@@ -39,7 +44,9 @@ abstract contract ERC20TransferRestriction is ERC20ExtensionCore, IERC20Transfer
 
     /// @inheritdoc IERC20TransferRestriction
     function detectTransferRestriction(address from, address to, uint256) public view virtual returns (uint8) {
-        if (_paused) return RESTRICTION_PAUSED;
+        // A zero address on either side means supply is being created or destroyed, not moved.
+        if (from != address(0) && to != address(0) && _paused) return RESTRICTION_PAUSED;
+
         if (_frozen[from]) return RESTRICTION_SENDER_FROZEN;
         if (_frozen[to]) return RESTRICTION_RECIPIENT_FROZEN;
         return RESTRICTION_OK;

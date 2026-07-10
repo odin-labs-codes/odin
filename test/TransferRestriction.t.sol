@@ -30,6 +30,17 @@ contract TransferRestrictionTest is BaseTest {
         assertEq(token.balanceOf(bob), INITIAL_BALANCE + 1e18);
     }
 
+    function test_PauseDoesNotStopMintOrBurn() public {
+        _setPaused(true);
+
+        vm.startPrank(admin);
+        token.mint(carol, 1e18);
+        token.burn(carol, 1e18);
+        vm.stopPrank();
+
+        assertEq(token.balanceOf(carol), 0);
+    }
+
     function test_FrozenSenderCannotSend() public {
         _setFrozen(alice, true);
 
