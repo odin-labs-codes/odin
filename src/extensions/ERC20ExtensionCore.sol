@@ -49,6 +49,9 @@ abstract contract ERC20ExtensionCore is Initializable, ERC20Upgradeable, IERC20E
     /// @notice A behaviour bit outside `BehaviorFlags.ALL` was declared.
     error ERC20UnknownBehaviorFlag(uint256 flags);
 
+    /// @notice A fee module returned a fee larger than the amount being transferred.
+    error ERC20FeeExceedsAmount(uint256 fee, uint256 amount);
+
     function __ERC20ExtensionCore_init() internal onlyInitializing {}
 
     // -----------------------------------------------------------------------------------------------
@@ -60,18 +63,41 @@ abstract contract ERC20ExtensionCore is Initializable, ERC20Upgradeable, IERC20E
      *      every assembly regardless of the order modules are inherited in.
      *
      *      1. **Restriction checks.** First, because a transfer that is not allowed to happen must not have
-     *         emitted a `Transfer` or called anything. Mint and burn reach this phase with a zero address
-     *         intact, so a module can apply different rules to supply changes than it does to transfers.
+     *         moved a fee, emitted a `Transfer`, or called anything. Mint and burn reach this phase with a
+     *         zero address intact, so a module can apply different rules to supply changes than it does to
+     *         transfers.
      *
-     *      2. **The transfer itself.**
+     *      2. **Fee collection**, as a separate `_rawUpdate` from the sender to the vault. Separate because
+     *         the fee is a real movement of value between two real accounts and deserves its own `Transfer`
+     *         event; an indexer that only saw the net leg would show a supply leak. It runs before the main
+     *         leg so that a sender holding exactly `value` succeeds: the two legs debit `fee` and
+     *         `value - fee`, which is `value` in total, and either order fits the balance.
      *
-     *      3. **After-transfer work**, last and only once balances have settled, so a module reading state
+     *      3. **The transfer itself**, for `value - fee`.
+     *
+     *      4. **After-transfer work**, last and only once balances have settled, so a module reading state
      *         there cannot observe a half-applied transfer.
      */
     function _update(address from, address to, uint256 value) internal virtual override {
         _checkTransferAllowed(from, to, value);
+
+        uint256 fee = _collectTransferFee(from, to, value);
+        // A module is free to compute any fee it likes, but not one that would underflow the main leg.
+        if (fee > value) revert ERC20FeeExceedsAmount(fee, value);
+
+        uint256 net = value - fee;
+        super._update(from, to, net);
+
+        _afterTransfer(from, to, net);
+    }
+
+    /**
+     * @dev Moves `value` without running any extension phase. The fee module uses this for the fee leg;
+     *      routing that leg back through {_update} would re-run every check against the wrong arguments and
+     *      recurse. Nothing else should ever call it.
+     */
+    function _rawUpdate(address from, address to, uint256 value) internal {
         super._update(from, to, value);
-        _afterTransfer(from, to, value);
     }
 
     /**
@@ -80,7 +106,21 @@ abstract contract ERC20ExtensionCore is Initializable, ERC20Upgradeable, IERC20E
      */
     function _checkTransferAllowed(address from, address to, uint256 value) internal view virtual {}
 
-    /// @dev Phase 3. Runs after balances have settled. Modules must call `super._afterTransfer`.
+    /**
+     * @dev Phase 2. Return the amount to withhold from `value` and move it to wherever it belongs, using
+     *      {_rawUpdate}. Modules must call `super._collectTransferFee` and add to its result.
+     *
+     *      The base case charges nothing and so names none of `(from, to, value)`; the fee module's
+     *      override declares them.
+     */
+    function _collectTransferFee(address, address, uint256) internal virtual returns (uint256) {
+        return 0;
+    }
+
+    /**
+     * @dev Phase 4. Runs after balances have settled, with `value` being the amount actually credited to
+     *      `to`. Modules must call `super._afterTransfer`.
+     */
     function _afterTransfer(address from, address to, uint256 value) internal virtual {}
 
     // -----------------------------------------------------------------------------------------------
