@@ -19,7 +19,7 @@ contract TransferFeeTest is BaseTest {
     }
 
     function test_FeeIsWithheldFromTheAmount() public {
-        _setFee(100); // 1%
+        _setFee(100, type(uint256).max); // 1%
 
         vm.prank(alice);
         token.transfer(bob, 100e18);
@@ -30,7 +30,7 @@ contract TransferFeeTest is BaseTest {
     }
 
     function test_ComputeFeeMatchesWhatTheTransferWithholds() public {
-        _setFee(250);
+        _setFee(250, type(uint256).max);
 
         uint256 quoted = token.computeFee(alice, bob, 777e18);
         uint256 before = token.balanceOf(bob);
@@ -44,7 +44,7 @@ contract TransferFeeTest is BaseTest {
     function testFuzz_ComputeFeeMatchesWhatTheTransferWithholds(uint16 basisPoints, uint256 amount) public {
         basisPoints = uint16(bound(basisPoints, 0, token.MAX_FEE_BASIS_POINTS()));
         amount = bound(amount, 0, INITIAL_BALANCE);
-        _setFee(basisPoints);
+        _setFee(basisPoints, type(uint256).max);
 
         uint256 quoted = token.computeFee(alice, bob, amount);
         uint256 before = token.balanceOf(bob);
@@ -56,14 +56,14 @@ contract TransferFeeTest is BaseTest {
     }
 
     function test_FeeRoundsInTheSendersFavour() public {
-        _setFee(1); // 0.01%
+        _setFee(1, type(uint256).max); // 0.01%
 
         // 999 * 1 / 10_000 floors to zero.
         assertEq(token.computeFee(alice, bob, 9_999), 0);
     }
 
     function test_TheFeeLegGetsItsOwnTransferEvent() public {
-        _setFee(100);
+        _setFee(100, type(uint256).max);
 
         vm.expectEmit(true, true, false, true, address(token));
         emit IERC20.Transfer(alice, vault, 1e18);
@@ -73,7 +73,7 @@ contract TransferFeeTest is BaseTest {
     }
 
     function test_FeeCollectedEventCarriesTheRealRecipient() public {
-        _setFee(100);
+        _setFee(100, type(uint256).max);
 
         vm.expectEmit(true, true, false, true, address(token));
         emit IERC20TransferFee.TransferFeeCollected(alice, bob, 1e18);
@@ -83,7 +83,7 @@ contract TransferFeeTest is BaseTest {
     }
 
     function test_SenderHoldingExactlyTheAmountSucceeds() public {
-        _setFee(100);
+        _setFee(100, type(uint256).max);
 
         vm.prank(admin);
         token.mint(carol, 100e18);
@@ -99,13 +99,36 @@ contract TransferFeeTest is BaseTest {
     }
 
     function test_ExtensionDataReportsRateAndVault() public {
-        _setFee(300);
+        _setFee(300, type(uint256).max);
 
-        (uint16 basisPoints, address reportedVault) =
-            abi.decode(token.extensionData(ExtensionIds.TRANSFER_FEE), (uint16, address));
+        (uint16 basisPoints, uint256 cap, address reportedVault) =
+            abi.decode(token.extensionData(ExtensionIds.TRANSFER_FEE), (uint16, uint256, address));
 
         assertEq(basisPoints, 300);
+        assertEq(cap, type(uint256).max);
         assertEq(reportedVault, vault);
+    }
+
+    function test_CapTakesOverFromTheRate() public {
+        _setFee(1_000, 5e18); // 10%, capped at 5 tokens
+
+        assertEq(token.computeFee(alice, bob, 10e18), 1e18);
+        assertEq(token.computeFee(alice, bob, 1_000e18), 5e18);
+        assertEq(token.maximumFee(), 5e18);
+    }
+
+    function test_MaximumFeeIsZeroWhileTheRateIsZero() public {
+        _setFee(0, 5e18);
+
+        assertEq(token.maximumFee(), 0);
+        assertEq(token.computeFee(alice, bob, 1_000e18), 0);
+    }
+
+    function testFuzz_FeeNeverExceedsTheCap(uint256 amount) public {
+        _setFee(1_000, 5e18);
+        amount = bound(amount, 0, INITIAL_BALANCE);
+
+        assertLe(token.computeFee(alice, bob, amount), 5e18);
     }
 
     function test_RevertWhen_RateIsAboveTheImmutableCeiling() public {
@@ -117,7 +140,7 @@ contract TransferFeeTest is BaseTest {
             )
         );
         vm.prank(admin);
-        token.setFeeConfig(tooHigh);
+        token.setFeeConfig(tooHigh, type(uint256).max);
     }
 
     function test_RevertWhen_VaultIsZero() public {
@@ -133,6 +156,6 @@ contract TransferFeeTest is BaseTest {
             )
         );
         vm.prank(alice);
-        token.setFeeConfig(100);
+        token.setFeeConfig(100, type(uint256).max);
     }
 }

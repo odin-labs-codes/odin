@@ -10,7 +10,7 @@ import {ERC20ExtensionCore} from "./ERC20ExtensionCore.sol";
 
 /**
  * @title ERC20TransferFee
- * @notice A transfer fee that is pre-computable.
+ * @notice A transfer fee that is pre-computable and hard-capped.
  *
  * @dev The fee itself is the easy part. What makes fee-on-transfer tokens unintegratable is that a caller
  *      cannot answer "how much will actually arrive?" without trying it, so every protocol either wraps the
@@ -18,7 +18,7 @@ import {ERC20ExtensionCore} from "./ERC20ExtensionCore.sol";
  *
  *      ## Rounding and direction
  *
- *      `fee = floor(amount * basisPoints / 10_000)`, withheld from the amount. Flooring rounds in the
+ *      `fee = min(floor(amount * basisPoints / 10_000), maximumFee)`, withheld from the amount. Flooring rounds in the
  *      sender's favour, and the sender is the party who did not choose to pay a fee.
  *
  *      ## The ceiling that cannot move
@@ -36,6 +36,7 @@ abstract contract ERC20TransferFee is ERC20ExtensionCore, IERC20TransferFee {
 
     uint16 private _basisPoints;
     address private _feeVault;
+    uint256 private _maximumFee;
 
     function __ERC20TransferFee_init() internal onlyInitializing {
         _registerExtension(ExtensionIds.TRANSFER_FEE, BehaviorFlags.FEE_ON_TRANSFER);
@@ -52,7 +53,16 @@ abstract contract ERC20TransferFee is ERC20ExtensionCore, IERC20TransferFee {
         uint16 basisPoints = _basisPoints;
         if (basisPoints == 0) return 0;
 
-        return Math.mulDiv(amount, basisPoints, FEE_BASIS_POINT_DENOMINATOR);
+        return Math.min(Math.mulDiv(amount, basisPoints, FEE_BASIS_POINT_DENOMINATOR), _maximumFee);
+    }
+
+    /// @inheritdoc IERC20TransferFee
+    function maximumFee() public view virtual returns (uint256) {
+        // Zero while the rate is zero. Clamping further — to the largest fee the rate could actually
+        // produce — was considered and rejected: the only caps it would lower are ones near
+        // `type(uint256).max`, so it would cost a `mulDiv` on every call to replace one astronomical
+        // number with another, while leaving the bound just as loose for the caps that occur in practice.
+        return _basisPoints == 0 ? 0 : _maximumFee;
     }
 
     /// @inheritdoc IERC20TransferFee
@@ -68,7 +78,7 @@ abstract contract ERC20TransferFee is ERC20ExtensionCore, IERC20TransferFee {
     /// @inheritdoc ERC20ExtensionCore
     function _extensionData(bytes4 extensionId) internal view virtual override returns (bytes memory) {
         if (extensionId == ExtensionIds.TRANSFER_FEE) {
-            return abi.encode(_basisPoints, _feeVault);
+            return abi.encode(_basisPoints, _maximumFee, _feeVault);
         }
         return super._extensionData(extensionId);
     }
@@ -98,16 +108,17 @@ abstract contract ERC20TransferFee is ERC20ExtensionCore, IERC20TransferFee {
     // Configuration
     // -----------------------------------------------------------------------------------------------
 
-    /// @notice Sets the fee rate.
-    function setFeeConfig(uint16 basisPoints) external virtual {
+    /// @notice Sets the fee rate and the absolute per-transfer cap.
+    function setFeeConfig(uint16 basisPoints, uint256 newMaximumFee) external virtual {
         _authorizeExtensionConfig(ExtensionIds.TRANSFER_FEE);
         if (basisPoints > MAX_FEE_BASIS_POINTS) {
             revert ERC20FeeBasisPointsTooHigh(basisPoints, MAX_FEE_BASIS_POINTS);
         }
 
         _basisPoints = basisPoints;
+        _maximumFee = newMaximumFee;
 
-        emit FeeConfigUpdated(basisPoints);
+        emit FeeConfigUpdated(basisPoints, newMaximumFee);
         _emitExtensionConfigured(ExtensionIds.TRANSFER_FEE);
     }
 

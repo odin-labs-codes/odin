@@ -28,9 +28,9 @@ abstract contract BaseTest is Test {
         vm.stopPrank();
     }
 
-    function _setFee(uint16 basisPoints) internal {
+    function _setFee(uint16 basisPoints, uint256 maximumFee) internal {
         vm.prank(admin);
-        token.setFeeConfig(basisPoints);
+        token.setFeeConfig(basisPoints, maximumFee);
     }
 
     function _setFrozen(address account, bool frozen) internal {

@@ -3,11 +3,13 @@ pragma solidity ^0.8.24;
 
 /**
  * @title IERC20TransferFee
- * @notice A transfer fee that an integrator can predict rather than discover.
+ * @notice A transfer fee that an integrator can predict and bound.
  *
  * @dev Fee-on-transfer tokens are refused by most protocols, and the reason is not the fee. It is that the
  *      protocol cannot find out what the fee will be without performing the transfer. {computeFee} returns,
- *      in a `view` call, exactly what a transfer with those arguments would withhold in the same transaction.
+ *      in a `view` call, exactly what a transfer with those arguments would withhold in the same transaction,
+ *      and {maximumFee} bounds it over every possible amount so a caller can size worst-case slippage
+ *      without iterating.
  *
  *      **Fee direction.** The fee is withheld *from* the transferred amount, never added on top of it.
  *      `transfer(to, amount)` always debits the sender exactly `amount` — that is ERC-20's meaning and this
@@ -26,8 +28,8 @@ interface IERC20TransferFee {
     /// @notice Emitted for every transfer that actually withheld a fee.
     event TransferFeeCollected(address indexed from, address indexed to, uint256 fee);
 
-    /// @notice Emitted when the fee rate changes.
-    event FeeConfigUpdated(uint16 basisPoints);
+    /// @notice Emitted when the fee rate or the absolute cap changes.
+    event FeeConfigUpdated(uint16 basisPoints, uint256 maximumFee);
 
     /// @notice Emitted when the address collecting fees changes.
     event FeeVaultUpdated(address indexed vault);
@@ -45,4 +47,23 @@ interface IERC20TransferFee {
 
     /// @notice The address collecting fees, or the zero address if none is configured.
     function feeVault() external view returns (address);
+
+    /**
+     * @notice An upper bound on the fee any single transfer can incur under the current configuration.
+     *
+     * @dev Note that this is the *current* cap, and the authority can raise it. A quote that has to
+     *      survive a configuration change must be built on {MAX_FEE_BASIS_POINTS} instead.
+     *
+     *      Returns zero while the rate is zero, which is the one case where reporting the stored cap
+     *      would be actively misleading rather than merely loose.
+     */
+    function maximumFee() external view returns (uint256);
+
+    /**
+     * @notice The highest rate this deployment will ever accept, as a compile-time constant.
+     * @dev The one fee figure no authority can move, which makes it the only sound basis for a quote that
+     *      has to outlive a configuration change. `fee <= amount * MAX_FEE_BASIS_POINTS / 10_000` holds for
+     *      the lifetime of the deployment. Cache it once.
+     */
+    function MAX_FEE_BASIS_POINTS() external view returns (uint16);
 }
