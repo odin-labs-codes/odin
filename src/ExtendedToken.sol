@@ -5,6 +5,7 @@ import {AccessControlUpgradeable} from "@openzeppelin/contracts-upgradeable/acce
 
 import {ERC20ExtensionCore} from "./extensions/ERC20ExtensionCore.sol";
 import {ERC20OnchainMetadata} from "./extensions/ERC20OnchainMetadata.sol";
+import {ERC20TransferFee} from "./extensions/ERC20TransferFee.sol";
 import {ERC20TransferRestriction} from "./extensions/ERC20TransferRestriction.sol";
 import {ExtensionIds} from "./libraries/ExtensionIds.sol";
 
@@ -27,12 +28,15 @@ import {ExtensionIds} from "./libraries/ExtensionIds.sol";
  *      The constructor grants every role to `admin` so that a deployment is usable immediately. Splitting
  *      them across separate keys is the expected next step.
  */
-contract ExtendedToken is ERC20OnchainMetadata, ERC20TransferRestriction, AccessControlUpgradeable {
+contract ExtendedToken is ERC20OnchainMetadata, ERC20TransferFee, ERC20TransferRestriction, AccessControlUpgradeable {
     /// @notice Creates and destroys supply.
     bytes32 public constant SUPPLY_ROLE = keccak256("berc.role.SUPPLY");
 
     /// @notice Writes the on-chain metadata store.
     bytes32 public constant METADATA_ROLE = keccak256("berc.role.METADATA");
+
+    /// @notice Sets the fee rate and the vault that collects fees.
+    bytes32 public constant FEE_CONFIG_ROLE = keccak256("berc.role.FEE_CONFIG");
 
     /// @notice Pauses transfers and freezes accounts.
     bytes32 public constant RESTRICTION_ROLE = keccak256("berc.role.RESTRICTION");
@@ -62,11 +66,13 @@ contract ExtendedToken is ERC20OnchainMetadata, ERC20TransferRestriction, Access
         __AccessControl_init();
         __ERC20ExtensionCore_init();
         __ERC20OnchainMetadata_init();
+        __ERC20TransferFee_init();
         __ERC20TransferRestriction_init();
 
         _grantRole(DEFAULT_ADMIN_ROLE, admin);
         _grantRole(SUPPLY_ROLE, admin);
         _grantRole(METADATA_ROLE, admin);
+        _grantRole(FEE_CONFIG_ROLE, admin);
         _grantRole(RESTRICTION_ROLE, admin);
 
         // Fixes the extension set. Must be last.
@@ -101,11 +107,20 @@ contract ExtendedToken is ERC20OnchainMetadata, ERC20TransferRestriction, Access
         super._checkTransferAllowed(from, to, value);
     }
 
+    function _collectTransferFee(address from, address to, uint256 value)
+        internal
+        virtual
+        override(ERC20ExtensionCore, ERC20TransferFee)
+        returns (uint256)
+    {
+        return super._collectTransferFee(from, to, value);
+    }
+
     function _extensionData(bytes4 extensionId)
         internal
         view
         virtual
-        override(ERC20OnchainMetadata, ERC20TransferRestriction)
+        override(ERC20OnchainMetadata, ERC20TransferFee, ERC20TransferRestriction)
         returns (bytes memory)
     {
         return super._extensionData(extensionId);
@@ -115,6 +130,8 @@ contract ExtendedToken is ERC20OnchainMetadata, ERC20TransferRestriction, Access
     function _authorizeExtensionConfig(bytes4 extensionId) internal view virtual override {
         if (extensionId == ExtensionIds.ONCHAIN_METADATA) {
             _checkRole(METADATA_ROLE);
+        } else if (extensionId == ExtensionIds.TRANSFER_FEE) {
+            _checkRole(FEE_CONFIG_ROLE);
         } else if (extensionId == ExtensionIds.TRANSFER_RESTRICTION) {
             _checkRole(RESTRICTION_ROLE);
         } else {

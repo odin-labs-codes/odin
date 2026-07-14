@@ -9,18 +9,23 @@ import {BaseTest} from "./BaseTest.sol";
 /// @dev The discovery surface is the whole point of the framework, so it gets its own suite rather than
 ///      being checked in passing by the module tests.
 contract DiscoveryTest is BaseTest {
+    /// @dev An id no assembly in this repo installs, so it stands in for "an extension you do not have".
+    bytes4 private constant ABSENT = bytes4(keccak256("erc20.extension.notARealExtension"));
+
     function test_InstalledExtensionsAreReported() public view {
         bytes4[] memory ids = token.extensions();
 
-        assertEq(ids.length, 2);
+        assertEq(ids.length, 3);
         assertEq(ids[0], ExtensionIds.ONCHAIN_METADATA);
-        assertEq(ids[1], ExtensionIds.TRANSFER_RESTRICTION);
+        assertEq(ids[1], ExtensionIds.TRANSFER_FEE);
+        assertEq(ids[2], ExtensionIds.TRANSFER_RESTRICTION);
         assertTrue(token.hasExtension(ExtensionIds.ONCHAIN_METADATA));
+        assertTrue(token.hasExtension(ExtensionIds.TRANSFER_FEE));
         assertTrue(token.hasExtension(ExtensionIds.TRANSFER_RESTRICTION));
     }
 
     function test_UninstalledExtensionIsNotReported() public view {
-        assertFalse(token.hasExtension(ExtensionIds.TRANSFER_FEE));
+        assertFalse(token.hasExtension(ABSENT));
     }
 
     function test_ExtensionDataReportsUriAndKeyCount() public {
@@ -45,9 +50,7 @@ contract DiscoveryTest is BaseTest {
     }
 
     function test_RevertWhen_ReadingDataForAnUninstalledExtension() public {
-        vm.expectRevert(
-            abi.encodeWithSelector(IERC20Extensions.ERC20ExtensionNotEnabled.selector, ExtensionIds.TRANSFER_FEE)
-        );
-        token.extensionData(ExtensionIds.TRANSFER_FEE);
+        vm.expectRevert(abi.encodeWithSelector(IERC20Extensions.ERC20ExtensionNotEnabled.selector, ABSENT));
+        token.extensionData(ABSENT);
     }
 }
