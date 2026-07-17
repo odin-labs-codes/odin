@@ -115,6 +115,10 @@ abstract contract ERC20TransferFee is ERC20ExtensionCore, IERC20TransferFee {
             revert ERC20FeeBasisPointsTooHigh(basisPoints, MAX_FEE_BASIS_POINTS);
         }
 
+        // A non-zero rate with no vault would send fees to address(0), which burns them and makes total
+        // supply drift downwards on every transfer — a rebase nobody declared.
+        if (basisPoints > 0 && _feeVault == address(0)) revert ERC20FeeVaultNotSet();
+
         _basisPoints = basisPoints;
         _maximumFee = newMaximumFee;
 

@@ -22,6 +22,9 @@ interface IERC20TransferFee {
     /// @notice A fee rate above the immutable ceiling was requested.
     error ERC20FeeBasisPointsTooHigh(uint16 basisPoints, uint16 maxBasisPoints);
 
+    /// @notice A non-zero fee rate was requested while no vault is set to receive the fees.
+    error ERC20FeeVaultNotSet();
+
     /// @notice The fee vault cannot be the zero address; that would burn fees and shrink total supply.
     error ERC20InvalidFeeVault(address vault);
 

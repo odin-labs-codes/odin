@@ -4,6 +4,7 @@ pragma solidity ^0.8.24;
 import {IAccessControl} from "@openzeppelin/contracts/access/IAccessControl.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 
+import {ExtendedToken} from "../src/ExtendedToken.sol";
 import {IERC20TransferFee} from "../src/interfaces/IERC20TransferFee.sol";
 import {ExtensionIds} from "../src/libraries/ExtensionIds.sol";
 
@@ -141,6 +142,23 @@ contract TransferFeeTest is BaseTest {
         );
         vm.prank(admin);
         token.setFeeConfig(tooHigh, type(uint256).max);
+    }
+
+    function test_RevertWhen_RateIsSetWithNoVault() public {
+        ExtendedToken fresh = new ExtendedToken("Fresh", "FRS", admin);
+
+        vm.expectRevert(IERC20TransferFee.ERC20FeeVaultNotSet.selector);
+        vm.prank(admin);
+        fresh.setFeeConfig(100, type(uint256).max);
+    }
+
+    function test_ZeroRateIsAcceptedWithNoVault() public {
+        ExtendedToken fresh = new ExtendedToken("Fresh", "FRS", admin);
+
+        vm.prank(admin);
+        fresh.setFeeConfig(0, 0);
+
+        assertEq(fresh.feeBasisPoints(), 0);
     }
 
     function test_RevertWhen_VaultIsZero() public {
