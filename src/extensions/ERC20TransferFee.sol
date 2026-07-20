@@ -60,7 +60,9 @@ abstract contract ERC20TransferFee is ERC20ExtensionCore, IERC20TransferFee {
 
     /// @inheritdoc IERC20TransferFee
     function isFeeExempt(address account) public view virtual returns (bool) {
-        return _feeExempt[account];
+        // The vault is exempt by construction: charging a fee on the vault's own withdrawals would make the
+        // fee recursive and would let it accumulate balance it can never fully move.
+        return _feeExempt[account] || (account != address(0) && account == _feeVault);
     }
 
     /// @inheritdoc IERC20TransferFee
