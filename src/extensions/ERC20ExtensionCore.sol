@@ -71,24 +71,34 @@ abstract contract ERC20ExtensionCore is Initializable, ERC20Upgradeable, IERC20E
      *         the fee is a real movement of value between two real accounts and deserves its own `Transfer`
      *         event; an indexer that only saw the net leg would show a supply leak. It runs before the main
      *         leg so that a sender holding exactly `value` succeeds: the two legs debit `fee` and
-     *         `value - fee`, which is `value` in total, and either order fits the balance.
+     *         `value - fee`, which is `value` in total, and either order fits the balance. It is skipped
+     *         entirely for mint and burn — a fee on minting invents supply, a fee on burning is not a burn.
      *
      *      3. **The transfer itself**, for `value - fee`.
      *
      *      4. **After-transfer work**, last and only once balances have settled, so a module reading state
-     *         there cannot observe a half-applied transfer.
+     *         there cannot observe a half-applied transfer. Skipped for mint and burn as well: a module
+     *         watching transfers should not be handed a supply change dressed as one.
      */
     function _update(address from, address to, uint256 value) internal virtual override {
         _checkTransferAllowed(from, to, value);
 
-        uint256 fee = _collectTransferFee(from, to, value);
-        // A module is free to compute any fee it likes, but not one that would underflow the main leg.
-        if (fee > value) revert ERC20FeeExceedsAmount(fee, value);
+        // A zero address on either side means supply is being created or destroyed, not moved.
+        bool isTransfer = from != address(0) && to != address(0);
+
+        uint256 fee = 0;
+        if (isTransfer) {
+            fee = _collectTransferFee(from, to, value);
+            // A module is free to compute any fee it likes, but not one that would underflow the main leg.
+            if (fee > value) revert ERC20FeeExceedsAmount(fee, value);
+        }
 
         uint256 net = value - fee;
         super._update(from, to, net);
 
-        _afterTransfer(from, to, net);
+        if (isTransfer) {
+            _afterTransfer(from, to, net);
+        }
     }
 
     /**
@@ -108,7 +118,8 @@ abstract contract ERC20ExtensionCore is Initializable, ERC20Upgradeable, IERC20E
 
     /**
      * @dev Phase 2. Return the amount to withhold from `value` and move it to wherever it belongs, using
-     *      {_rawUpdate}. Modules must call `super._collectTransferFee` and add to its result.
+     *      {_rawUpdate}. Never called for mint or burn. Modules must call `super._collectTransferFee` and
+     *      add to its result.
      *
      *      The base case charges nothing and so names none of `(from, to, value)`; the fee module's
      *      override declares them.
@@ -119,7 +130,7 @@ abstract contract ERC20ExtensionCore is Initializable, ERC20Upgradeable, IERC20E
 
     /**
      * @dev Phase 4. Runs after balances have settled, with `value` being the amount actually credited to
-     *      `to`. Modules must call `super._afterTransfer`.
+     *      `to`. Never called for mint or burn. Modules must call `super._afterTransfer`.
      */
     function _afterTransfer(address from, address to, uint256 value) internal virtual {}
 

@@ -110,6 +110,22 @@ contract TransferFeeTest is BaseTest {
         assertEq(reportedVault, vault);
     }
 
+    function test_MintAndBurnAreNeverCharged() public {
+        _setFee(1_000, type(uint256).max);
+
+        vm.startPrank(admin);
+        token.mint(carol, 100e18);
+        assertEq(token.balanceOf(carol), 100e18);
+
+        token.burn(carol, 100e18);
+        vm.stopPrank();
+
+        assertEq(token.balanceOf(carol), 0);
+        assertEq(token.balanceOf(vault), 0);
+        assertEq(token.computeFee(address(0), carol, 100e18), 0);
+        assertEq(token.computeFee(carol, address(0), 100e18), 0);
+    }
+
     function test_ExemptSenderPaysNothing() public {
         _setFee(100, type(uint256).max);
         vm.prank(admin);
