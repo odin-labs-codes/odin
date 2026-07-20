@@ -37,13 +37,19 @@ interface IERC20TransferFee {
     /// @notice Emitted when the address collecting fees changes.
     event FeeVaultUpdated(address indexed vault);
 
+    /// @notice Emitted when an account's fee exemption is granted or revoked.
+    event FeeExemptionUpdated(address indexed account, bool exempt);
+
     /**
      * @notice The fee a transfer with these arguments would withhold, right now.
      * @dev Exact, not an estimate: within one transaction, `transfer` withholds precisely this much.
-     *      Returns zero when `from` or `to` is the zero address.
+     *      Returns zero when `from` or `to` is the zero address, and when either side is fee-exempt.
      * @return fee The amount withheld from `amount`; the recipient receives `amount - fee`.
      */
     function computeFee(address from, address to, uint256 amount) external view returns (uint256 fee);
+
+    /// @notice Whether transfers touching this account are exempt from the fee.
+    function isFeeExempt(address account) external view returns (bool);
 
     /// @notice The current fee rate in basis points, against a denominator of 10,000.
     function feeBasisPoints() external view returns (uint16);

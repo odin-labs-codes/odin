@@ -37,6 +37,7 @@ abstract contract ERC20TransferFee is ERC20ExtensionCore, IERC20TransferFee {
     uint16 private _basisPoints;
     address private _feeVault;
     uint256 private _maximumFee;
+    mapping(address account => bool exempt) private _feeExempt;
 
     function __ERC20TransferFee_init() internal onlyInitializing {
         _registerExtension(ExtensionIds.TRANSFER_FEE, BehaviorFlags.FEE_ON_TRANSFER);
@@ -49,11 +50,17 @@ abstract contract ERC20TransferFee is ERC20ExtensionCore, IERC20TransferFee {
     /// @inheritdoc IERC20TransferFee
     function computeFee(address from, address to, uint256 amount) public view virtual returns (uint256) {
         if (from == address(0) || to == address(0)) return 0;
+        if (isFeeExempt(from) || isFeeExempt(to)) return 0;
 
         uint16 basisPoints = _basisPoints;
         if (basisPoints == 0) return 0;
 
         return Math.min(Math.mulDiv(amount, basisPoints, FEE_BASIS_POINT_DENOMINATOR), _maximumFee);
+    }
+
+    /// @inheritdoc IERC20TransferFee
+    function isFeeExempt(address account) public view virtual returns (bool) {
+        return _feeExempt[account];
     }
 
     /// @inheritdoc IERC20TransferFee
@@ -135,5 +142,14 @@ abstract contract ERC20TransferFee is ERC20ExtensionCore, IERC20TransferFee {
 
         emit FeeVaultUpdated(newFeeVault);
         _emitExtensionConfigured(ExtensionIds.TRANSFER_FEE);
+    }
+
+    /// @notice Exempts an account from the fee, or revokes the exemption. Typically used for AMM pools.
+    function setFeeExempt(address account, bool exempt) external virtual {
+        _authorizeExtensionConfig(ExtensionIds.TRANSFER_FEE);
+
+        _feeExempt[account] = exempt;
+
+        emit FeeExemptionUpdated(account, exempt);
     }
 }

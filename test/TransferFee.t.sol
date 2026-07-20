@@ -110,6 +110,36 @@ contract TransferFeeTest is BaseTest {
         assertEq(reportedVault, vault);
     }
 
+    function test_ExemptSenderPaysNothing() public {
+        _setFee(100, type(uint256).max);
+        vm.prank(admin);
+        token.setFeeExempt(alice, true);
+
+        vm.prank(alice);
+        token.transfer(bob, 100e18);
+
+        assertEq(token.balanceOf(bob), INITIAL_BALANCE + 100e18);
+        assertEq(token.balanceOf(vault), 0);
+    }
+
+    function test_ExemptRecipientPaysNothingEither() public {
+        _setFee(100, type(uint256).max);
+        vm.prank(admin);
+        token.setFeeExempt(bob, true);
+
+        assertEq(token.computeFee(alice, bob, 100e18), 0);
+    }
+
+    function test_RevokingAnExemptionRestoresTheFee() public {
+        _setFee(100, type(uint256).max);
+        vm.startPrank(admin);
+        token.setFeeExempt(alice, true);
+        token.setFeeExempt(alice, false);
+        vm.stopPrank();
+
+        assertEq(token.computeFee(alice, bob, 100e18), 1e18);
+    }
+
     function test_CapTakesOverFromTheRate() public {
         _setFee(1_000, 5e18); // 10%, capped at 5 tokens
 
