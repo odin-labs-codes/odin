@@ -18,8 +18,15 @@ import {ERC20ExtensionCore} from "./ERC20ExtensionCore.sol";
  *
  *      ## Rounding and direction
  *
- *      `fee = min(floor(amount * basisPoints / 10_000), maximumFee)`, withheld from the amount. Flooring rounds in the
- *      sender's favour, and the sender is the party who did not choose to pay a fee.
+ *      `fee = min(floor(amount * basisPoints / 10_000), maximumFee)`, withheld from the amount. Flooring
+ *      rounds in the sender's favour, and the sender is the party who did not choose to pay a fee.
+ *
+ *      ## Why `transferExactOut` exists
+ *
+ *      A caller who needs a recipient to end up with exactly N has to invert the fee function. Inverting a
+ *      floored ratio by hand goes wrong at the boundaries — `N * 10_000 / (10_000 - bps)` is off by one for
+ *      most N — and every caller that gets it wrong either overpays or reverts. {_amountInForExactOut}
+ *      solves it once, exactly.
  *
  *      ## The ceiling that cannot move
  *
@@ -130,7 +137,20 @@ abstract contract ERC20TransferFee is ERC20ExtensionCore, IERC20TransferFee {
         _transfer(from, to, amountIn);
     }
 
-    /// @dev Smallest `amountIn` with `amountIn - computeFee(from, to, amountIn) == amountOut`.
+    /**
+     * @dev Smallest `amountIn` with `amountIn - computeFee(from, to, amountIn) == amountOut`.
+     *
+     *      Write `b` for the rate, `D` for the denominator and `k = D - b`. The net received is
+     *      `net(x) = x - floor(x*b/D) = ceil(x*k/D)`, so `net(x) == amountOut` holds exactly for
+     *      `(amountOut-1)*D/k < x <= amountOut*D/k`, and the smallest such integer is
+     *      `floor((amountOut-1)*D/k) + 1`.
+     *
+     *      Rounding `amountOut*D/k` up instead — the obvious first attempt — lands on the largest input that
+     *      delivers `amountOut` for some inputs, and on one that overdelivers for the rest.
+     *
+     *      `Math.mulDiv` carries the intermediate product in 512 bits, so the only inputs that revert are
+     *      ones whose answer genuinely does not fit in a `uint256`.
+     */
     function _amountInForExactOut(address from, address to, uint256 amountOut)
         internal
         view
@@ -143,9 +163,8 @@ abstract contract ERC20TransferFee is ERC20ExtensionCore, IERC20TransferFee {
         uint16 basisPoints = _basisPoints;
         if (basisPoints == 0) return amountOut;
 
-        // Invert `out = in - in*b/D` for `in`, rounding up so the recipient is never short.
         uint256 k = FEE_BASIS_POINT_DENOMINATOR - basisPoints; // > 0: basisPoints <= MAX_FEE_BASIS_POINTS
-        return Math.mulDiv(amountOut, FEE_BASIS_POINT_DENOMINATOR, k, Math.Rounding.Ceil);
+        return Math.mulDiv(amountOut - 1, FEE_BASIS_POINT_DENOMINATOR, k) + 1;
     }
 
     // -----------------------------------------------------------------------------------------------

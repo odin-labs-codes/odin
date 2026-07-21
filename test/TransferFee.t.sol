@@ -179,7 +179,8 @@ contract TransferFeeTest is BaseTest {
         vm.prank(alice);
         uint256 amountIn = token.transferExactOut(bob, 99e18);
 
-        assertEq(amountIn, 100e18);
+        // Not 100e18: that is the largest input delivering 99e18, and this returns the smallest.
+        assertEq(amountIn, 100e18 - 1);
         assertEq(token.balanceOf(bob), INITIAL_BALANCE + 99e18);
     }
 
@@ -195,8 +196,10 @@ contract TransferFeeTest is BaseTest {
     function test_ExactOutSpendsTheGrossAllowance() public {
         _setFee(100, type(uint256).max);
 
+        uint256 quoted = token.computeAmountInForExactOut(alice, bob, 99e18);
+
         vm.prank(alice);
-        token.approve(carol, 100e18);
+        token.approve(carol, quoted);
 
         vm.prank(carol);
         token.transferFromExactOut(alice, bob, 99e18);
@@ -206,6 +209,26 @@ contract TransferFeeTest is BaseTest {
 
     function test_ExactOutIsTheIdentityWithNoFee() public view {
         assertEq(token.computeAmountInForExactOut(alice, bob, 123e18), 123e18);
+    }
+
+    function testFuzz_ExactOutIsExactAndMinimal(uint16 basisPoints, uint256 amountOut) public {
+        basisPoints = uint16(bound(basisPoints, 1, token.MAX_FEE_BASIS_POINTS()));
+        amountOut = bound(amountOut, 1, INITIAL_BALANCE / 2);
+        _setFee(basisPoints, type(uint256).max);
+
+        uint256 amountIn = token.computeAmountInForExactOut(alice, bob, amountOut);
+
+        // Exact: the recipient gains precisely what was asked for.
+        assertEq(amountIn - token.computeFee(alice, bob, amountIn), amountOut);
+        // Minimal: one wei less falls short, so there is no cheaper input.
+        assertLt(amountIn - 1 - token.computeFee(alice, bob, amountIn - 1), amountOut);
+    }
+
+    function test_ExactOutDoesNotOverdeliver() public {
+        _setFee(100, type(uint256).max);
+
+        // ceil(100 * 10_000 / 9_900) is 102, which delivers 101. The answer is 101, which delivers 100.
+        assertEq(token.computeAmountInForExactOut(alice, bob, 100), 101);
     }
 
     function test_CapTakesOverFromTheRate() public {
