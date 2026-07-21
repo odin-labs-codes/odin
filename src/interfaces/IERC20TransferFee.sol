@@ -23,6 +23,17 @@ interface IERC20TransferFee {
     /// @notice A fee rate above the immutable ceiling was requested.
     error ERC20FeeBasisPointsTooHigh(uint16 basisPoints, uint16 maxBasisPoints);
 
+    /// @notice No input produces this output: the answer does not fit in a `uint256`.
+    error ERC20ExactOutUnrepresentable(uint256 amountOut);
+
+    /**
+     * @notice An exact-output transfer named the sender as the recipient.
+     * @dev Rejected rather than accommodated. The whole promise of this family is that `to` ends up
+     *      `amountOut` better off; when `to` is also paying, its balance falls by the fee and rises by
+     *      nothing, so there is no honest value to return and no version of the guarantee that holds.
+     */
+    error ERC20ExactOutToSelf(address account);
+
     /// @notice A non-zero fee rate was requested while no vault is set to receive the fees.
     error ERC20FeeVaultNotSet();
 
@@ -52,7 +63,15 @@ interface IERC20TransferFee {
     /// @notice Whether transfers touching this account are exempt from the fee. The vault is always exempt.
     function isFeeExempt(address account) external view returns (bool);
 
-    /// @notice The smallest input that makes `to` receive exactly `amountOut`, without transferring.
+    /**
+     * @notice The smallest input that makes `to` receive exactly `amountOut`, without transferring.
+     *
+     * @dev Agreement with the matching transfer covers **address validity and fee arithmetic only**: a
+     *      zero sender or recipient, a sender who is also the recipient, and an answer that does not fit
+     *      in a `uint256`. It is not a dry run. The transfer can still fail afterwards for reasons this
+     *      view never looks at — a pause, a frozen account, a hook that rejects or runs out of gas, or
+     *      simply an insufficient balance or allowance.
+     */
     function computeAmountInForExactOut(address from, address to, uint256 amountOut)
         external
         view

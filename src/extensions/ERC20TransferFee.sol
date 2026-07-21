@@ -26,11 +26,13 @@ import {ERC20ExtensionCore} from "./ERC20ExtensionCore.sol";
  *      A caller who needs a recipient to end up with exactly N has to invert the fee function. Inverting a
  *      floored ratio by hand goes wrong at the boundaries — `N * 10_000 / (10_000 - bps)` is off by one for
  *      most N — and every caller that gets it wrong either overpays or reverts. {_amountInForExactOut}
- *      solves it once, exactly.
+ *      solves it once, exactly, including where the absolute cap takes over from the rate.
  *
  *      ## The ceiling that cannot move
  *
- *      {MAX_FEE_BASIS_POINTS} is a compile-time constant, so `fee <= amount * MAX_FEE_BASIS_POINTS / 10_000`
+ *      {maximumFee} is authority-mutable, which means an integrator caching it must also watch
+ *      `FeeConfigUpdated`. {MAX_FEE_BASIS_POINTS} is not: it is a compile-time constant, so
+ *      `fee <= amount * MAX_FEE_BASIS_POINTS / 10_000`
  *      holds for the lifetime of the deployment no matter what the authority does. A fee with no ceiling at
  *      all is indistinguishable from theft on a delay.
  */
@@ -140,13 +142,15 @@ abstract contract ERC20TransferFee is ERC20ExtensionCore, IERC20TransferFee {
     /**
      * @dev Smallest `amountIn` with `amountIn - computeFee(from, to, amountIn) == amountOut`.
      *
-     *      Write `b` for the rate, `D` for the denominator and `k = D - b`. The net received is
-     *      `net(x) = x - floor(x*b/D) = ceil(x*k/D)`, so `net(x) == amountOut` holds exactly for
-     *      `(amountOut-1)*D/k < x <= amountOut*D/k`, and the smallest such integer is
+     *      Write `b` for the rate, `D` for the denominator and `k = D - b`. Where the cap does not bind,
+     *      the net received is `net(x) = x - floor(x*b/D) = ceil(x*k/D)`, so `net(x) == amountOut` holds
+     *      exactly for `(amountOut-1)*D/k < x <= amountOut*D/k`, and the smallest such integer is
      *      `floor((amountOut-1)*D/k) + 1`.
      *
-     *      Rounding `amountOut*D/k` up instead — the obvious first attempt — lands on the largest input that
-     *      delivers `amountOut` for some inputs, and on one that overdelivers for the rest.
+     *      Where the cap does bind, `net(x) = x - maximumFee`, so the answer is `amountOut + maximumFee`.
+     *      Which branch applies is decided by evaluating the fee at the uncapped candidate: because `net`
+     *      never gains more than 1 per step, the two branches cannot both miss, and they agree on the
+     *      boundary where the uncapped fee equals the cap exactly.
      *
      *      `Math.mulDiv` carries the intermediate product in 512 bits, so the only inputs that revert are
      *      ones whose answer genuinely does not fit in a `uint256`.
@@ -157,14 +161,39 @@ abstract contract ERC20TransferFee is ERC20ExtensionCore, IERC20TransferFee {
         virtual
         returns (uint256)
     {
+        // The address-level rejections the matching transfer would make, in the same order, so a caller
+        // simulating against this view is not told an impossible transfer will work. A sender who is also
+        // the recipient loses the fee and gains nothing, which no return value describes honestly.
+        if (from == to) revert ERC20ExactOutToSelf(from);
+        if (from == address(0)) revert ERC20InvalidSender(address(0));
+        if (to == address(0)) revert ERC20InvalidReceiver(address(0));
+
         if (amountOut == 0) return 0;
         if (isFeeExempt(from) || isFeeExempt(to)) return amountOut;
 
         uint16 basisPoints = _basisPoints;
         if (basisPoints == 0) return amountOut;
 
+        uint256 cap = _maximumFee;
         uint256 k = FEE_BASIS_POINT_DENOMINATOR - basisPoints; // > 0: basisPoints <= MAX_FEE_BASIS_POINTS
-        return Math.mulDiv(amountOut - 1, FEE_BASIS_POINT_DENOMINATOR, k) + 1;
+
+        // `mulDiv` reverts when the *uncapped* inverse overflows, which says nothing about whether the real
+        // answer fits: with a cap of zero the fee is always zero and the answer is `amountOut` itself, yet
+        // the uncapped candidate for `amountOut = type(uint256).max` is about 1.11x that. So the candidate
+        // is computed only where it exists, and its absence is treated as evidence that the cap binds.
+        //
+        // The order matters and cannot be inverted. Testing the capped candidate first and returning it as
+        // soon as its fee reaches the cap loses minimality: with a 10% rate and a cap of 5, both 49 and 50
+        // deliver exactly 45, and `amountOut + cap` is the larger of the two.
+        uint256 uncappedLimit = Math.mulDiv(type(uint256).max, k, FEE_BASIS_POINT_DENOMINATOR, Math.Rounding.Ceil);
+        if (amountOut - 1 < uncappedLimit) {
+            uint256 uncapped = Math.mulDiv(amountOut - 1, FEE_BASIS_POINT_DENOMINATOR, k) + 1;
+            if (Math.mulDiv(uncapped, basisPoints, FEE_BASIS_POINT_DENOMINATOR) <= cap) return uncapped;
+        }
+
+        // Checked before the addition so the caller gets the declared error rather than a bare panic.
+        if (cap > type(uint256).max - amountOut) revert ERC20ExactOutUnrepresentable(amountOut);
+        return amountOut + cap;
     }
 
     // -----------------------------------------------------------------------------------------------

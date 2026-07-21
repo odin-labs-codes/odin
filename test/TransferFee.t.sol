@@ -231,6 +231,45 @@ contract TransferFeeTest is BaseTest {
         assertEq(token.computeAmountInForExactOut(alice, bob, 100), 101);
     }
 
+    function testFuzz_ExactOutIsExactAndMinimalUnderACap(uint256 amountOut, uint256 cap) public {
+        amountOut = bound(amountOut, 1, INITIAL_BALANCE / 2);
+        cap = bound(cap, 0, 10e18);
+        _setFee(1_000, cap);
+
+        uint256 amountIn = token.computeAmountInForExactOut(alice, bob, amountOut);
+
+        assertEq(amountIn - token.computeFee(alice, bob, amountIn), amountOut);
+        assertLt(amountIn - 1 - token.computeFee(alice, bob, amountIn - 1), amountOut);
+    }
+
+    function test_ExactOutIsMinimalOnTheCapBoundary() public {
+        _setFee(1_000, 5); // 10%, capped at 5 wei
+
+        // Both 49 and 50 deliver 45. `amountOut + cap` would return 50; the answer is 49.
+        assertEq(token.computeAmountInForExactOut(alice, bob, 45), 49);
+    }
+
+    function test_ExactOutAtTheTopOfTheRangeWithNoEffectiveCap() public {
+        _setFee(1_000, 0);
+
+        // A zero cap means no fee at all, so the identity is representable right up to the maximum.
+        assertEq(token.computeAmountInForExactOut(alice, bob, type(uint256).max), type(uint256).max);
+    }
+
+    function test_RevertWhen_ExactOutIsUnrepresentable() public {
+        _setFee(1_000, 10);
+
+        vm.expectRevert(
+            abi.encodeWithSelector(IERC20TransferFee.ERC20ExactOutUnrepresentable.selector, type(uint256).max)
+        );
+        token.computeAmountInForExactOut(alice, bob, type(uint256).max);
+    }
+
+    function test_RevertWhen_ExactOutNamesTheSenderAsRecipient() public {
+        vm.expectRevert(abi.encodeWithSelector(IERC20TransferFee.ERC20ExactOutToSelf.selector, alice));
+        token.computeAmountInForExactOut(alice, alice, 1e18);
+    }
+
     function test_CapTakesOverFromTheRate() public {
         _setFee(1_000, 5e18); // 10%, capped at 5 tokens
 
