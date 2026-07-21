@@ -10,7 +10,7 @@ import {ERC20ExtensionCore} from "./ERC20ExtensionCore.sol";
 
 /**
  * @title ERC20TransferFee
- * @notice A transfer fee that is pre-computable and hard-capped.
+ * @notice A transfer fee that is pre-computable, hard-capped, and invertible.
  *
  * @dev The fee itself is the easy part. What makes fee-on-transfer tokens unintegratable is that a caller
  *      cannot answer "how much will actually arrive?" without trying it, so every protocol either wraps the
@@ -31,7 +31,11 @@ abstract contract ERC20TransferFee is ERC20ExtensionCore, IERC20TransferFee {
     /// @notice Basis-point denominator. 10_000 basis points is 100%.
     uint256 public constant FEE_BASIS_POINT_DENOMINATOR = 10_000;
 
-    /// @notice The highest fee rate this token will ever accept, as a compile-time constant. 10%.
+    /**
+     * @notice The highest fee rate this token will ever accept, as a compile-time constant.
+     * @dev 10%. Also keeps `FEE_BASIS_POINT_DENOMINATOR - basisPoints` strictly positive, without which
+     *      {transferExactOut} has no solution.
+     */
     uint16 public constant MAX_FEE_BASIS_POINTS = 1_000;
 
     uint16 private _basisPoints;
@@ -84,12 +88,64 @@ abstract contract ERC20TransferFee is ERC20ExtensionCore, IERC20TransferFee {
         return _basisPoints;
     }
 
+    /// @inheritdoc IERC20TransferFee
+    function computeAmountInForExactOut(address from, address to, uint256 amountOut)
+        public
+        view
+        virtual
+        override
+        returns (uint256)
+    {
+        return _amountInForExactOut(from, to, amountOut);
+    }
+
     /// @inheritdoc ERC20ExtensionCore
     function _extensionData(bytes4 extensionId) internal view virtual override returns (bytes memory) {
         if (extensionId == ExtensionIds.TRANSFER_FEE) {
             return abi.encode(_basisPoints, _maximumFee, _feeVault);
         }
         return super._extensionData(extensionId);
+    }
+
+    // -----------------------------------------------------------------------------------------------
+    // Exact-output transfers
+    // -----------------------------------------------------------------------------------------------
+
+    /// @inheritdoc IERC20TransferFee
+    function transferExactOut(address to, uint256 amountOut) public virtual returns (uint256 amountIn) {
+        address owner = _msgSender();
+        amountIn = _amountInForExactOut(owner, to, amountOut);
+        _transfer(owner, to, amountIn);
+    }
+
+    /// @inheritdoc IERC20TransferFee
+    function transferFromExactOut(address from, address to, uint256 amountOut)
+        public
+        virtual
+        returns (uint256 amountIn)
+    {
+        amountIn = _amountInForExactOut(from, to, amountOut);
+        // The allowance covers the gross amount, because the gross amount is what leaves `from`.
+        _spendAllowance(from, _msgSender(), amountIn);
+        _transfer(from, to, amountIn);
+    }
+
+    /// @dev Smallest `amountIn` with `amountIn - computeFee(from, to, amountIn) == amountOut`.
+    function _amountInForExactOut(address from, address to, uint256 amountOut)
+        internal
+        view
+        virtual
+        returns (uint256)
+    {
+        if (amountOut == 0) return 0;
+        if (isFeeExempt(from) || isFeeExempt(to)) return amountOut;
+
+        uint16 basisPoints = _basisPoints;
+        if (basisPoints == 0) return amountOut;
+
+        // Invert `out = in - in*b/D` for `in`, rounding up so the recipient is never short.
+        uint256 k = FEE_BASIS_POINT_DENOMINATOR - basisPoints; // > 0: basisPoints <= MAX_FEE_BASIS_POINTS
+        return Math.mulDiv(amountOut, FEE_BASIS_POINT_DENOMINATOR, k, Math.Rounding.Ceil);
     }
 
     // -----------------------------------------------------------------------------------------------

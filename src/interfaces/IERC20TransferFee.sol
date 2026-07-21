@@ -3,13 +3,14 @@ pragma solidity ^0.8.24;
 
 /**
  * @title IERC20TransferFee
- * @notice A transfer fee that an integrator can predict and bound.
+ * @notice A transfer fee that an integrator can predict, bound, and invert.
  *
  * @dev Fee-on-transfer tokens are refused by most protocols, and the reason is not the fee. It is that the
  *      protocol cannot find out what the fee will be without performing the transfer. {computeFee} returns,
  *      in a `view` call, exactly what a transfer with those arguments would withhold in the same transaction,
  *      and {maximumFee} bounds it over every possible amount so a caller can size worst-case slippage
- *      without iterating.
+ *      without iterating. {transferExactOut} closes the last gap: a caller who needs the recipient to end
+ *      up with exactly N should not have to invert the fee function themselves and round it wrong.
  *
  *      **Fee direction.** The fee is withheld *from* the transferred amount, never added on top of it.
  *      `transfer(to, amount)` always debits the sender exactly `amount` — that is ERC-20's meaning and this
@@ -50,6 +51,24 @@ interface IERC20TransferFee {
 
     /// @notice Whether transfers touching this account are exempt from the fee. The vault is always exempt.
     function isFeeExempt(address account) external view returns (bool);
+
+    /// @notice The smallest input that makes `to` receive exactly `amountOut`, without transferring.
+    function computeAmountInForExactOut(address from, address to, uint256 amountOut)
+        external
+        view
+        returns (uint256 amountIn);
+
+    /**
+     * @notice Transfer so that `to` receives exactly `amountOut`, whatever the fee costs.
+     * @return amountIn The total debited from the caller, fee included.
+     */
+    function transferExactOut(address to, uint256 amountOut) external returns (uint256 amountIn);
+
+    /**
+     * @notice {transferExactOut} on behalf of `from`, spending the caller's allowance.
+     * @dev The allowance is spent on the gross `amountIn`, since that is what leaves `from`.
+     */
+    function transferFromExactOut(address from, address to, uint256 amountOut) external returns (uint256 amountIn);
 
     /// @notice The current fee rate in basis points, against a denominator of 10,000.
     function feeBasisPoints() external view returns (uint16);

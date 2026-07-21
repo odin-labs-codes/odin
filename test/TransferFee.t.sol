@@ -173,6 +173,41 @@ contract TransferFeeTest is BaseTest {
         assertFalse(token.isFeeExempt(vault));
     }
 
+    function test_ExactOutDeliversTheAskedAmount() public {
+        _setFee(100, type(uint256).max);
+
+        vm.prank(alice);
+        uint256 amountIn = token.transferExactOut(bob, 99e18);
+
+        assertEq(amountIn, 100e18);
+        assertEq(token.balanceOf(bob), INITIAL_BALANCE + 99e18);
+    }
+
+    function test_ExactOutQuoteMatchesTheTransfer() public {
+        _setFee(100, type(uint256).max);
+
+        uint256 quoted = token.computeAmountInForExactOut(alice, bob, 99e18);
+
+        vm.prank(alice);
+        assertEq(token.transferExactOut(bob, 99e18), quoted);
+    }
+
+    function test_ExactOutSpendsTheGrossAllowance() public {
+        _setFee(100, type(uint256).max);
+
+        vm.prank(alice);
+        token.approve(carol, 100e18);
+
+        vm.prank(carol);
+        token.transferFromExactOut(alice, bob, 99e18);
+
+        assertEq(token.allowance(alice, carol), 0);
+    }
+
+    function test_ExactOutIsTheIdentityWithNoFee() public view {
+        assertEq(token.computeAmountInForExactOut(alice, bob, 123e18), 123e18);
+    }
+
     function test_CapTakesOverFromTheRate() public {
         _setFee(1_000, 5e18); // 10%, capped at 5 tokens
 
