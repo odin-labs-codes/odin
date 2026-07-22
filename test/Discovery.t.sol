@@ -15,10 +15,11 @@ contract DiscoveryTest is BaseTest {
     function test_InstalledExtensionsAreReported() public view {
         bytes4[] memory ids = token.extensions();
 
-        assertEq(ids.length, 3);
+        assertEq(ids.length, 4);
         assertEq(ids[0], ExtensionIds.ONCHAIN_METADATA);
         assertEq(ids[1], ExtensionIds.TRANSFER_FEE);
         assertEq(ids[2], ExtensionIds.TRANSFER_RESTRICTION);
+        assertEq(ids[3], ExtensionIds.TRANSFER_HOOK);
         assertTrue(token.hasExtension(ExtensionIds.ONCHAIN_METADATA));
         assertTrue(token.hasExtension(ExtensionIds.TRANSFER_FEE));
         assertTrue(token.hasExtension(ExtensionIds.TRANSFER_RESTRICTION));

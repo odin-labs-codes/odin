@@ -33,6 +33,11 @@ abstract contract BaseTest is Test {
         token.setFeeConfig(basisPoints, maximumFee);
     }
 
+    function _setHook(address hook, uint32 gasLimit) internal {
+        vm.prank(admin);
+        token.setTransferHook(hook, gasLimit);
+    }
+
     function _setFrozen(address account, bool frozen) internal {
         vm.prank(admin);
         token.setFrozen(account, frozen);

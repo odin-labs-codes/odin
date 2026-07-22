@@ -21,4 +21,7 @@ library ExtensionIds {
 
     /// @notice ERC-1404 style transfer restrictions.
     bytes4 internal constant TRANSFER_RESTRICTION = bytes4(keccak256("erc20.extension.transferRestriction"));
+
+    /// @notice A gas-bounded call into a policy contract after every transfer.
+    bytes4 internal constant TRANSFER_HOOK = bytes4(keccak256("erc20.extension.transferHook"));
 }

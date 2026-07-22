@@ -6,6 +6,7 @@ import {AccessControlUpgradeable} from "@openzeppelin/contracts-upgradeable/acce
 import {ERC20ExtensionCore} from "./extensions/ERC20ExtensionCore.sol";
 import {ERC20OnchainMetadata} from "./extensions/ERC20OnchainMetadata.sol";
 import {ERC20TransferFee} from "./extensions/ERC20TransferFee.sol";
+import {ERC20TransferHook} from "./extensions/ERC20TransferHook.sol";
 import {ERC20TransferRestriction} from "./extensions/ERC20TransferRestriction.sol";
 import {ExtensionIds} from "./libraries/ExtensionIds.sol";
 
@@ -28,7 +29,13 @@ import {ExtensionIds} from "./libraries/ExtensionIds.sol";
  *      The constructor grants every role to `admin` so that a deployment is usable immediately. Splitting
  *      them across separate keys is the expected next step.
  */
-contract ExtendedToken is ERC20OnchainMetadata, ERC20TransferFee, ERC20TransferRestriction, AccessControlUpgradeable {
+contract ExtendedToken is
+    ERC20OnchainMetadata,
+    ERC20TransferFee,
+    ERC20TransferRestriction,
+    ERC20TransferHook,
+    AccessControlUpgradeable
+{
     /// @notice Creates and destroys supply.
     bytes32 public constant SUPPLY_ROLE = keccak256("berc.role.SUPPLY");
 
@@ -40,6 +47,9 @@ contract ExtendedToken is ERC20OnchainMetadata, ERC20TransferFee, ERC20TransferR
 
     /// @notice Pauses transfers and freezes accounts.
     bytes32 public constant RESTRICTION_ROLE = keccak256("berc.role.RESTRICTION");
+
+    /// @notice Installs and removes the transfer hook.
+    bytes32 public constant HOOK_CONFIG_ROLE = keccak256("berc.role.HOOK_CONFIG");
 
     /// @notice The admin cannot be the zero address; the token would have no reachable authority.
     error ExtendedTokenInvalidAdmin();
@@ -68,12 +78,14 @@ contract ExtendedToken is ERC20OnchainMetadata, ERC20TransferFee, ERC20TransferR
         __ERC20OnchainMetadata_init();
         __ERC20TransferFee_init();
         __ERC20TransferRestriction_init();
+        __ERC20TransferHook_init();
 
         _grantRole(DEFAULT_ADMIN_ROLE, admin);
         _grantRole(SUPPLY_ROLE, admin);
         _grantRole(METADATA_ROLE, admin);
         _grantRole(FEE_CONFIG_ROLE, admin);
         _grantRole(RESTRICTION_ROLE, admin);
+        _grantRole(HOOK_CONFIG_ROLE, admin);
 
         // Fixes the extension set. Must be last.
         _sealExtensions();
@@ -116,11 +128,19 @@ contract ExtendedToken is ERC20OnchainMetadata, ERC20TransferFee, ERC20TransferR
         return super._collectTransferFee(from, to, value);
     }
 
+    function _afterTransfer(address from, address to, uint256 value)
+        internal
+        virtual
+        override(ERC20ExtensionCore, ERC20TransferHook)
+    {
+        super._afterTransfer(from, to, value);
+    }
+
     function _extensionData(bytes4 extensionId)
         internal
         view
         virtual
-        override(ERC20OnchainMetadata, ERC20TransferFee, ERC20TransferRestriction)
+        override(ERC20OnchainMetadata, ERC20TransferFee, ERC20TransferRestriction, ERC20TransferHook)
         returns (bytes memory)
     {
         return super._extensionData(extensionId);
@@ -134,6 +154,8 @@ contract ExtendedToken is ERC20OnchainMetadata, ERC20TransferFee, ERC20TransferR
             _checkRole(FEE_CONFIG_ROLE);
         } else if (extensionId == ExtensionIds.TRANSFER_RESTRICTION) {
             _checkRole(RESTRICTION_ROLE);
+        } else if (extensionId == ExtensionIds.TRANSFER_HOOK) {
+            _checkRole(HOOK_CONFIG_ROLE);
         } else {
             revert ERC20ExtensionNotEnabled(extensionId);
         }
