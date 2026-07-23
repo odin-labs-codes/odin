@@ -14,6 +14,8 @@ import {
     ReentrantHook,
     ReentrantPullHook,
     RejectingHook,
+    ReturnDataBombHook,
+    RevertBombHook,
     WrongSelectorHook
 } from "./mocks/HookReceivers.sol";
 
@@ -120,6 +122,45 @@ contract TransferHookTest is BaseTest {
         _setHook(address(burner), token.MIN_HOOK_GAS_LIMIT());
 
         vm.expectRevert();
+        vm.prank(alice);
+        token.transfer(bob, 1e18);
+    }
+
+    function test_AHookCannotChargeTheCallerForItsReturnData() public {
+        ReturnDataBombHook bomb = new ReturnDataBombHook();
+        _setHook(address(bomb), token.MAX_HOOK_GAS_LIMIT());
+
+        // Several hundred kilobytes come back and none of it is copied here, so the transfer fails on the
+        // acknowledgement check rather than by running the caller out of gas.
+        vm.expectRevert(
+            abi.encodeWithSelector(IERC20TransferHook.ERC20TransferHookNotAcknowledged.selector, address(bomb))
+        );
+        vm.prank(alice);
+        token.transfer(bob, 1e18);
+    }
+
+    function test_AHookCannotChargeTheCallerForItsRevertReason() public {
+        RevertBombHook bomb = new RevertBombHook();
+        _setHook(address(bomb), token.MAX_HOOK_GAS_LIMIT());
+
+        // 100,000 bytes of revert data, truncated to the 256 the error declares.
+        vm.expectRevert(
+            abi.encodeWithSelector(IERC20TransferHook.ERC20TransferHookFailed.selector, new bytes(256))
+        );
+        vm.prank(alice);
+        token.transfer(bob, 1e18);
+    }
+
+    function test_AShortRevertReasonSurvivesIntact() public {
+        RejectingHook rejecting = new RejectingHook();
+        _setHook(address(rejecting), 100_000);
+
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                IERC20TransferHook.ERC20TransferHookFailed.selector,
+                abi.encodeWithSelector(RejectingHook.HookSaysNo.selector)
+            )
+        );
         vm.prank(alice);
         token.transfer(bob, 1e18);
     }

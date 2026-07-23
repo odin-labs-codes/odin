@@ -40,6 +40,12 @@ abstract contract ERC20TransferHook is ERC20ExtensionCore, ReentrancyGuardTransi
     /// @notice Ceiling on the configurable gas limit, so the declared worst case stays a real bound.
     uint32 public constant MAX_HOOK_GAS_LIMIT = 1_000_000;
 
+    /// @dev The acknowledgement is one selector in one word. Nothing longer is ever read.
+    uint256 private constant HOOK_RETURNDATA_LIMIT = 32;
+
+    /// @dev How much of a reverting hook's reason is carried into {ERC20TransferHookFailed}.
+    uint256 private constant HOOK_REVERT_REASON_LIMIT = 256;
+
     address private _hook;
     uint32 private _gasLimit;
 
@@ -84,21 +90,66 @@ abstract contract ERC20TransferHook is ERC20ExtensionCore, ReentrancyGuardTransi
         super._update(from, to, value);
     }
 
-    /// @inheritdoc ERC20ExtensionCore
+    /**
+     * @inheritdoc ERC20ExtensionCore
+     * @dev The call is written in assembly for one reason: a high-level call assigns the callee's return
+     *      data into `bytes memory`, and that `RETURNDATACOPY` plus its memory expansion is paid by *this*
+     *      contract, out of the caller's gas, after the hook's own budget has already been released.
+     *
+     *      That turns the published gas bound into a fiction. A hook given 1,000,000 gas can spend most of
+     *      it expanding its own memory and return several hundred kilobytes; copying that back here costs
+     *      roughly as much again, so an integrator who budgeted `transferHookGasLimit()` — exactly what
+     *      this framework tells them to budget — runs out of gas through no fault of their own.
+     *
+     *      So the return data is never copied wholesale. The acknowledgement is one word and is read only
+     *      when the hook returned exactly one word; a revert reason is truncated to a prefix long enough to
+     *      stay useful. Both costs are now constant, and `transferHookGasLimit()` bounds the hook again.
+     */
     function _afterTransfer(address from, address to, uint256 value) internal virtual override {
         super._afterTransfer(from, to, value);
 
         address hook = _hook;
         if (hook == address(0)) return;
 
-        try ITransferHookReceiver(hook).onTransfer{gas: _gasLimit}(address(this), from, to, value) returns (
-            bytes4 acknowledgement
-        ) {
-            if (acknowledgement != ITransferHookReceiver.onTransfer.selector) {
-                revert ERC20TransferHookNotAcknowledged(hook);
+        bytes memory payload = abi.encodeCall(ITransferHookReceiver.onTransfer, (address(this), from, to, value));
+        uint256 gasLimit = _gasLimit;
+
+        bool success;
+        uint256 returnedSize;
+        bytes32 acknowledgement;
+        bytes memory reason;
+
+        assembly ("memory-safe") {
+            success := call(gasLimit, hook, 0, add(payload, 0x20), mload(payload), 0x00, 0x00)
+            returnedSize := returndatasize()
+
+            switch success
+            case 0 {
+                let size := returnedSize
+                if gt(size, HOOK_REVERT_REASON_LIMIT) { size := HOOK_REVERT_REASON_LIMIT }
+                reason := mload(0x40)
+                mstore(reason, size)
+                returndatacopy(add(reason, 0x20), 0x00, size)
+                mstore(0x40, add(add(reason, 0x20), and(add(size, 0x1f), not(0x1f))))
             }
-        } catch (bytes memory reason) {
-            revert ERC20TransferHookFailed(reason);
+            default {
+                // Reading only at the exact expected width keeps the scratch slot from carrying stale
+                // bytes into the comparison below.
+                if eq(returnedSize, HOOK_RETURNDATA_LIMIT) {
+                    returndatacopy(0x00, 0x00, HOOK_RETURNDATA_LIMIT)
+                    acknowledgement := mload(0x00)
+                }
+            }
+        }
+
+        if (!success) revert ERC20TransferHookFailed(reason);
+
+        // Discarding the low-order 28 bytes is the point, not a hazard: `bytes4(bytes32)` keeps the
+        // high-order four, which is where the ABI puts a `bytes4` return value in its word — the same
+        // bytes `abi.decode(..., (bytes4))` would have read.
+        bytes4 selector = bytes4(acknowledgement);
+        if (returnedSize != HOOK_RETURNDATA_LIMIT || selector != ITransferHookReceiver.onTransfer.selector) {
+            revert ERC20TransferHookNotAcknowledged(hook);
         }
     }
 

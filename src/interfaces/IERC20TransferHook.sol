@@ -21,7 +21,12 @@ interface IERC20TransferHook {
     /// @notice A hook must be a contract; an EOA would silently accept every transfer.
     error ERC20InvalidTransferHook(address hook);
 
-    /// @notice The hook reverted, and with it the transfer.
+    /**
+     * @notice The hook reverted, and with it the transfer.
+     * @param reason A truncated prefix of the hook's revert data — at most 256 bytes. Copying it whole
+     *        would let a hook charge the transfer's caller for an arbitrarily large `RETURNDATACOPY`,
+     *        which is gas the published hook budget does not cover.
+     */
     error ERC20TransferHookFailed(bytes reason);
 
     /// @notice The hook returned something other than its acknowledgement selector.

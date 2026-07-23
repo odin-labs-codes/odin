@@ -58,6 +58,23 @@ contract GasBurningHook is ITransferHookReceiver {
     }
 }
 
+/// @dev Returns several hundred kilobytes, to prove the token does not copy it back at the caller's expense.
+contract ReturnDataBombHook {
+    fallback(bytes calldata) external returns (bytes memory) {
+        return new bytes(200_000);
+    }
+}
+
+/// @dev Reverts with a reason far longer than the token is willing to carry.
+contract RevertBombHook {
+    fallback() external {
+        bytes memory big = new bytes(100_000);
+        assembly {
+            revert(add(big, 0x20), mload(big))
+        }
+    }
+}
+
 /// @dev Calls straight back into the token's transfer path, which the guard must reject.
 contract ReentrantHook is ITransferHookReceiver {
     function onTransfer(address token, address, address to, uint256 value) external returns (bytes4) {
