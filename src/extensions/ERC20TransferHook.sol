@@ -165,7 +165,16 @@ abstract contract ERC20TransferHook is ERC20ExtensionCore, ReentrancyGuardTransi
     function setTransferHook(address hook, uint32 gasLimit) external virtual {
         _authorizeExtensionConfig(ExtensionIds.TRANSFER_HOOK);
 
-        if (hook == address(0)) gasLimit = 0;
+        if (hook == address(0)) {
+            gasLimit = 0;
+        } else {
+            // An EOA would return empty returndata and silently fail the acknowledgement check on every
+            // transfer, bricking the token. Catching it here turns that into a failed configuration call.
+            if (hook.code.length == 0) revert ERC20InvalidTransferHook(hook);
+            if (gasLimit < MIN_HOOK_GAS_LIMIT || gasLimit > MAX_HOOK_GAS_LIMIT) {
+                revert ERC20InvalidHookGasLimit(gasLimit, MIN_HOOK_GAS_LIMIT, MAX_HOOK_GAS_LIMIT);
+            }
+        }
 
         _hook = hook;
         _gasLimit = gasLimit;

@@ -197,6 +197,26 @@ contract TransferHookTest is BaseTest {
         assertEq(recorder.callCount(), 1);
     }
 
+    function test_RevertWhen_HookIsAnEoa() public {
+        vm.expectRevert(abi.encodeWithSelector(IERC20TransferHook.ERC20InvalidTransferHook.selector, alice));
+        _setHook(alice, 100_000);
+    }
+
+    function test_RevertWhen_GasLimitIsOutOfRange() public {
+        uint32 min = token.MIN_HOOK_GAS_LIMIT();
+        uint32 max = token.MAX_HOOK_GAS_LIMIT();
+
+        vm.expectRevert(
+            abi.encodeWithSelector(IERC20TransferHook.ERC20InvalidHookGasLimit.selector, min - 1, min, max)
+        );
+        _setHook(address(recorder), min - 1);
+
+        vm.expectRevert(
+            abi.encodeWithSelector(IERC20TransferHook.ERC20InvalidHookGasLimit.selector, max + 1, min, max)
+        );
+        _setHook(address(recorder), max + 1);
+    }
+
     function test_RemovingTheHookAlsoClearsTheAdvertisedBudget() public {
         _setHook(address(recorder), 500_000);
         _setHook(address(0), 100_000);

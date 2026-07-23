@@ -18,6 +18,9 @@ pragma solidity ^0.8.24;
  *      `ERC20TransferHook` for the exact ordering guarantees.
  */
 interface IERC20TransferHook {
+    /// @notice The requested gas limit is outside the range this token accepts.
+    error ERC20InvalidHookGasLimit(uint32 gasLimit, uint32 minGasLimit, uint32 maxGasLimit);
+
     /// @notice A hook must be a contract; an EOA would silently accept every transfer.
     error ERC20InvalidTransferHook(address hook);
 
