@@ -110,6 +110,14 @@ contract ExtendedToken is
     // `ERC20ExtensionCore._update` and none of these can alter it.
     // -----------------------------------------------------------------------------------------------
 
+    function _update(address from, address to, uint256 value)
+        internal
+        virtual
+        override(ERC20ExtensionCore, ERC20TransferHook)
+    {
+        super._update(from, to, value);
+    }
+
     function _checkTransferAllowed(address from, address to, uint256 value)
         internal
         view

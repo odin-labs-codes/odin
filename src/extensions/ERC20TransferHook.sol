@@ -1,6 +1,10 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.24;
 
+import {
+    ReentrancyGuardTransientUpgradeable
+} from "@openzeppelin/contracts-upgradeable/utils/ReentrancyGuardTransientUpgradeable.sol";
+
 import {IERC20TransferHook, ITransferHookReceiver} from "../interfaces/IERC20TransferHook.sol";
 import {BehaviorFlags} from "../libraries/BehaviorFlags.sol";
 import {ExtensionIds} from "../libraries/ExtensionIds.sol";
@@ -8,13 +12,17 @@ import {ERC20ExtensionCore} from "./ERC20ExtensionCore.sol";
 
 /**
  * @title ERC20TransferHook
- * @notice Calls a policy contract after every transfer, under a gas bound.
+ * @notice Calls a policy contract after every transfer, under a gas bound and a reentrancy guard.
  *
  * @dev A transfer hook is the single most expensive thing this framework lets a token do to the people
  *      integrating with it, so it is built to be *survivable* rather than flexible:
  *
  *      - **Last.** The hook runs in phase 4, after balances have settled. It can never observe a
  *        half-applied transfer, and it cannot influence the amounts — only accept or reject the result.
+ *      - **Guarded.** {_update} is wrapped in a transient-storage reentrancy guard, so a hook that calls
+ *        back into any balance-moving path on this token reverts. The guard lives in this module rather
+ *        than in `ERC20ExtensionCore` so that an assembly built without this module pays nothing for it; a
+ *        token with no external calls on its transfer path has no reentrancy to guard against.
  *      - **Bounded.** The hook gets exactly {transferHookGasLimit} gas, published so integrators can budget
  *        a worst case instead of discovering it. The EVM withholds 1/64 of the remaining gas from any call,
  *        so a caller must actually hold slightly more than this for the hook to receive its full budget.
@@ -25,7 +33,7 @@ import {ERC20ExtensionCore} from "./ERC20ExtensionCore.sol";
  *
  *      Mint and burn do not fire the hook; phase 4 only runs for transfers between two real accounts.
  */
-abstract contract ERC20TransferHook is ERC20ExtensionCore, IERC20TransferHook {
+abstract contract ERC20TransferHook is ERC20ExtensionCore, ReentrancyGuardTransientUpgradeable, IERC20TransferHook {
     /// @notice Floor on the configurable gas limit. Below this a hook cannot do anything useful.
     uint32 public constant MIN_HOOK_GAS_LIMIT = 30_000;
 
@@ -36,6 +44,7 @@ abstract contract ERC20TransferHook is ERC20ExtensionCore, IERC20TransferHook {
     uint32 private _gasLimit;
 
     function __ERC20TransferHook_init() internal onlyInitializing {
+        __ReentrancyGuardTransient_init();
         _registerExtension(ExtensionIds.TRANSFER_HOOK, BehaviorFlags.TRANSFER_HOOK);
     }
 
@@ -62,8 +71,18 @@ abstract contract ERC20TransferHook is ERC20ExtensionCore, IERC20TransferHook {
     }
 
     // -----------------------------------------------------------------------------------------------
-    // Transfer pipeline — phase 4
+    // Transfer pipeline — the guard, and phase 4
     // -----------------------------------------------------------------------------------------------
+
+    /**
+     * @dev Wraps the whole pipeline so the guard is already held when the hook runs in phase 4. The fee
+     *      module's internal leg goes through `_rawUpdate`, which reaches `ERC20Upgradeable._update`
+     *      directly and never re-enters this function, so splitting a transfer in two does not trip the
+     *      guard on itself.
+     */
+    function _update(address from, address to, uint256 value) internal virtual override nonReentrant {
+        super._update(from, to, value);
+    }
 
     /// @inheritdoc ERC20ExtensionCore
     function _afterTransfer(address from, address to, uint256 value) internal virtual override {

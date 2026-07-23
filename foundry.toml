@@ -5,5 +5,6 @@ libs = ["lib"]
 test = "test"
 
 solc_version = "0.8.28"
+evm_version = "cancun"          # EIP-1153 transient storage: the hook reentrancy guard uses TSTORE/TLOAD
 optimizer = true
 optimizer_runs = 200
