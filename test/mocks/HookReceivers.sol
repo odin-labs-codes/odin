@@ -58,6 +58,26 @@ contract GasBurningHook is ITransferHookReceiver {
     }
 }
 
+/// @dev Reads the state the token is in when phase 4 runs, so a test can assert what has already happened.
+contract OrderAssertingHook is ITransferHookReceiver {
+    address public vault;
+    uint256 public vaultBalanceAtCall;
+    uint256 public senderBalanceAtCall;
+    uint256 public recipientBalanceAtCall;
+
+    constructor(address vault_) {
+        vault = vault_;
+    }
+
+    function onTransfer(address token, address from, address to, uint256 value) external returns (bytes4) {
+        value;
+        vaultBalanceAtCall = IERC20(token).balanceOf(vault);
+        senderBalanceAtCall = IERC20(token).balanceOf(from);
+        recipientBalanceAtCall = IERC20(token).balanceOf(to);
+        return ITransferHookReceiver.onTransfer.selector;
+    }
+}
+
 /// @dev Returns several hundred kilobytes, to prove the token does not copy it back at the caller's expense.
 contract ReturnDataBombHook {
     fallback(bytes calldata) external returns (bytes memory) {
