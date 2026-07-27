@@ -11,16 +11,23 @@ pragma solidity ^0.8.24;
  *      derived from a name instead:
  *
  *          id = bytes4(keccak256("erc20.extension.<camelCaseName>"))
+ *
+ *      The names describe what the extension does. They contain no draft ERC number, because a draft
+ *      number is a placeholder that changes on the way to Final and would take every deployed token's
+ *      identifiers with it.
  */
 library ExtensionIds {
-    /// @notice Enumerable on-chain key/value metadata.
+    /// @notice Enumerable on-chain key/value metadata, with an ERC-1046 `tokenURI` as a secondary source.
     bytes4 internal constant ONCHAIN_METADATA = bytes4(keccak256("erc20.extension.onchainMetadata"));
 
-    /// @notice A fee withheld from every transfer.
+    /// @notice A pre-computable, capped fee withheld from every transfer.
     bytes4 internal constant TRANSFER_FEE = bytes4(keccak256("erc20.extension.transferFee"));
 
-    /// @notice ERC-1404 style transfer restrictions.
+    /// @notice ERC-1404 style transfer restrictions: pause and per-account freeze.
     bytes4 internal constant TRANSFER_RESTRICTION = bytes4(keccak256("erc20.extension.transferRestriction"));
+
+    /// @notice Transfers between non-zero addresses always revert.
+    bytes4 internal constant NON_TRANSFERABLE = bytes4(keccak256("erc20.extension.nonTransferable"));
 
     /// @notice A gas-bounded call into a policy contract after every transfer.
     bytes4 internal constant TRANSFER_HOOK = bytes4(keccak256("erc20.extension.transferHook"));
