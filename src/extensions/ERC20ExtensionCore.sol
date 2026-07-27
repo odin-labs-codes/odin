@@ -60,6 +60,9 @@ abstract contract ERC20ExtensionCore is Initializable, ERC20Upgradeable, IERC20E
     /// @notice The token's discovery surface was read before the assembly called `_sealExtensions()`.
     error ERC20ExtensionSetNotSealed();
 
+    /// @notice The declared behaviours contradict each other. See `BehaviorFlags.conflictingPair`.
+    error ERC20IncompatibleBehaviors(uint256 first, uint256 second);
+
     /// @notice A behaviour bit outside `BehaviorFlags.ALL` was declared.
     error ERC20UnknownBehaviorFlag(uint256 flags);
 
@@ -183,7 +186,7 @@ abstract contract ERC20ExtensionCore is Initializable, ERC20Upgradeable, IERC20E
     }
 
     /**
-     * @notice Freezes the extension set.
+     * @notice Freezes the extension set and validates that the declared behaviours are consistent.
      * @dev **Every assembly must call this as the last step of its constructor or initialiser.** Until it
      *      does, {extensions}, {hasExtension}, {extensionData} and {behaviorFlags} all revert, so an
      *      assembly that forgets has no discovery surface at all rather than a quietly incomplete one.
@@ -193,6 +196,10 @@ abstract contract ERC20ExtensionCore is Initializable, ERC20Upgradeable, IERC20E
     function _sealExtensions() internal onlyInitializing {
         ExtensionRegistryStorage storage $ = _getExtensionRegistryStorage();
         if ($.isSealed) revert ERC20ExtensionSetSealed();
+
+        (uint256 first, uint256 second) = BehaviorFlags.conflictingPair($.behaviorFlags);
+        if (first != 0) revert ERC20IncompatibleBehaviors(first, second);
+
         $.isSealed = true;
     }
 

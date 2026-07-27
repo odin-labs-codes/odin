@@ -29,6 +29,17 @@ contract DiscoveryTest is BaseTest {
         assertFalse(token.hasExtension(ABSENT));
     }
 
+    function test_MintAndSeizeAreAlwaysDeclared() public view {
+        uint256 flags = token.behaviorFlags();
+
+        assertTrue(flags & (1 << 7) != 0, "MINTABLE");
+        assertTrue(flags & (1 << 8) != 0, "SEIZABLE");
+    }
+
+    function test_ImmutableTokenDoesNotDeclareUpgradeable() public view {
+        assertEq(token.behaviorFlags() & (1 << 6), 0);
+    }
+
     function test_ExtensionDataReportsUriAndKeyCount() public {
         vm.startPrank(admin);
         token.setTokenURI("ipfs://document");

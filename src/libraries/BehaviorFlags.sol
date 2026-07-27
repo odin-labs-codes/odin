@@ -20,10 +20,18 @@ pragma solidity ^0.8.24;
  *         word is fixed at deployment too — with one exception, which the vocabulary names itself. A token
  *         declaring `UPGRADEABLE` can have its code replaced, and a replacement is not bound by the set the
  *         old code sealed. So the word is safe to cache forever exactly when `UPGRADEABLE` is clear, and
- *         otherwise only as far as the upgrade authority is trusted.
+ *         otherwise only as far as the upgrade authority is trusted. A verified clone of an immutable
+ *         runtime is the case where "forever" is a fact about the bytecode rather than a promise.
  */
 library BehaviorFlags {
-    /// @notice The recipient receives less than the amount named in the `transfer` call.
+    /**
+     * @notice The recipient receives less than the amount named in the `transfer` call.
+     * @dev Bits 0 through 5 describe the token's own observable behaviour: five of them change what a
+     *      transfer does and show up in a simulation, and `REBASING` shows up instead as a balance that
+     *      moved with no `Transfer` naming the account. Bits 6 and up describe powers an authority holds
+     *      over the token. Nothing reveals those until they are used, which is what makes them the ones an
+     *      integrator is most likely to discover late.
+     */
     uint256 internal constant FEE_ON_TRANSFER = 1 << 0;
 
     /// @notice `balanceOf` can change without a `Transfer` event naming the account.
@@ -38,9 +46,44 @@ library BehaviorFlags {
     /// @notice Individual accounts can be barred from transferring by an authority.
     uint256 internal constant BLOCKLIST = 1 << 4;
 
+    /// @notice Transfers between two non-zero addresses always revert; only mint and burn move value.
+    uint256 internal constant NON_TRANSFERABLE = 1 << 5;
+
     /// @notice The code behind this address can be replaced, so every other flag may change.
     uint256 internal constant UPGRADEABLE = 1 << 6;
 
+    /// @notice An authority can create supply. Every holder's share can be diluted without warning.
+    uint256 internal constant MINTABLE = 1 << 7;
+
+    /**
+     * @notice An authority can destroy any account's balance without that account's consent.
+     * @dev Token-2022's Permanent Delegate is a partial analogue and a strictly larger power: it can
+     *      transfer an arbitrary account's balance as well as burn it, while this flag names only the
+     *      destruction, which is all the reference tokens can do. This is also not `BLOCKLIST`: a freeze
+     *      stops value moving and is reversible, while this takes the value.
+     */
+    uint256 internal constant SEIZABLE = 1 << 8;
+
     /// @notice Every bit this library currently assigns meaning to. Bits outside this mask are reserved.
-    uint256 internal constant ALL = FEE_ON_TRANSFER | REBASING | TRANSFER_HOOK | PAUSABLE | BLOCKLIST | UPGRADEABLE;
+    uint256 internal constant ALL = FEE_ON_TRANSFER | REBASING | TRANSFER_HOOK | PAUSABLE | BLOCKLIST
+        | NON_TRANSFERABLE | UPGRADEABLE | MINTABLE | SEIZABLE;
+
+    /**
+     * @notice Returns the first pair of declared behaviours that contradict each other, or `(0, 0)` if
+     *         the word is self-consistent.
+     * @dev This is the single source of truth for the forbidden-combination table in the README, and is
+     *      evaluated once at deployment by {ERC20ExtensionCore-_sealExtensions}. Keeping it here rather
+     *      than in the core lets an integrator run the same check against a token they did not deploy.
+     *
+     *      Both entries below share one rationale: `NON_TRANSFERABLE` means the transfer path is
+     *      unreachable, so any behaviour that only manifests during a transfer is dead code that
+     *      nonetheless scares integrators away. Declaring both is never useful and always misleading.
+     */
+    function conflictingPair(uint256 flags) internal pure returns (uint256 first, uint256 second) {
+        if (flags & NON_TRANSFERABLE != 0) {
+            if (flags & FEE_ON_TRANSFER != 0) return (NON_TRANSFERABLE, FEE_ON_TRANSFER);
+            if (flags & TRANSFER_HOOK != 0) return (NON_TRANSFERABLE, TRANSFER_HOOK);
+        }
+        return (0, 0);
+    }
 }

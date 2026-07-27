@@ -8,6 +8,7 @@ import {ERC20OnchainMetadata} from "./extensions/ERC20OnchainMetadata.sol";
 import {ERC20TransferFee} from "./extensions/ERC20TransferFee.sol";
 import {ERC20TransferHook} from "./extensions/ERC20TransferHook.sol";
 import {ERC20TransferRestriction} from "./extensions/ERC20TransferRestriction.sol";
+import {BehaviorFlags} from "./libraries/BehaviorFlags.sol";
 import {ExtensionIds} from "./libraries/ExtensionIds.sol";
 
 /**
@@ -77,6 +78,13 @@ abstract contract ExtendedTokenBase is
         __ERC20TransferFee_init();
         __ERC20TransferRestriction_init();
         __ERC20TransferHook_init();
+
+        // Declared by every assembly built on this base, whatever extensions it installs, because {mint}
+        // and {burn} are on this contract and neither is optional. Leaving them out would let a token with
+        // no extensions report `behaviorFlags() == 0` — which the vocabulary defines as indistinguishable
+        // from a plain ERC-20 — while its supply authority could dilute every holder and take any balance.
+        // Those are the two powers least visible in a simulation and most costly to discover afterwards.
+        _declareBehavior(BehaviorFlags.MINTABLE | BehaviorFlags.SEIZABLE);
 
         _grantRole(DEFAULT_ADMIN_ROLE, admin);
         _grantRole(SUPPLY_ROLE, admin);
