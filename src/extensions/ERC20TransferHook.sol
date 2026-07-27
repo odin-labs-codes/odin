@@ -32,6 +32,8 @@ import {ERC20ExtensionCore} from "./ERC20ExtensionCore.sol";
  *        reasons unrelated to balances.
  *
  *      Mint and burn do not fire the hook; phase 4 only runs for transfers between two real accounts.
+ *
+ * @custom:storage-location erc7201:berc.storage.TransferHook
  */
 abstract contract ERC20TransferHook is ERC20ExtensionCore, ReentrancyGuardTransientUpgradeable, IERC20TransferHook {
     /// @notice Floor on the configurable gas limit. Below this a hook cannot do anything useful.
@@ -46,8 +48,21 @@ abstract contract ERC20TransferHook is ERC20ExtensionCore, ReentrancyGuardTransi
     /// @dev How much of a reverting hook's reason is carried into {ERC20TransferHookFailed}.
     uint256 private constant HOOK_REVERT_REASON_LIMIT = 256;
 
-    address private _hook;
-    uint32 private _gasLimit;
+    /// @custom:storage-location erc7201:berc.storage.TransferHook
+    struct TransferHookStorage {
+        address hook;
+        uint32 gasLimit;
+    }
+
+    // keccak256(abi.encode(uint256(keccak256("berc.storage.TransferHook")) - 1)) & ~bytes32(uint256(0xff))
+    bytes32 private constant TRANSFER_HOOK_STORAGE =
+        0x234bd1b5f25fbf979510559c69ff089ee9e0b4d5f6176dc1aa6c3b20cf6fb400;
+
+    function _getTransferHookStorage() private pure returns (TransferHookStorage storage $) {
+        assembly ("memory-safe") {
+            $.slot := TRANSFER_HOOK_STORAGE
+        }
+    }
 
     function __ERC20TransferHook_init() internal onlyInitializing {
         __ReentrancyGuardTransient_init();
@@ -60,18 +75,19 @@ abstract contract ERC20TransferHook is ERC20ExtensionCore, ReentrancyGuardTransi
 
     /// @inheritdoc IERC20TransferHook
     function transferHook() public view virtual returns (address) {
-        return _hook;
+        return _getTransferHookStorage().hook;
     }
 
     /// @inheritdoc IERC20TransferHook
     function transferHookGasLimit() public view virtual returns (uint32) {
-        return _gasLimit;
+        return _getTransferHookStorage().gasLimit;
     }
 
     /// @inheritdoc ERC20ExtensionCore
     function _extensionData(bytes4 extensionId) internal view virtual override returns (bytes memory) {
         if (extensionId == ExtensionIds.TRANSFER_HOOK) {
-            return abi.encode(_hook, _gasLimit);
+            TransferHookStorage storage $ = _getTransferHookStorage();
+            return abi.encode($.hook, $.gasLimit);
         }
         return super._extensionData(extensionId);
     }
@@ -108,11 +124,12 @@ abstract contract ERC20TransferHook is ERC20ExtensionCore, ReentrancyGuardTransi
     function _afterTransfer(address from, address to, uint256 value) internal virtual override {
         super._afterTransfer(from, to, value);
 
-        address hook = _hook;
+        TransferHookStorage storage $ = _getTransferHookStorage();
+        address hook = $.hook;
         if (hook == address(0)) return;
 
         bytes memory payload = abi.encodeCall(ITransferHookReceiver.onTransfer, (address(this), from, to, value));
-        uint256 gasLimit = _gasLimit;
+        uint256 gasLimit = $.gasLimit;
 
         bool success;
         uint256 returnedSize;
@@ -176,8 +193,9 @@ abstract contract ERC20TransferHook is ERC20ExtensionCore, ReentrancyGuardTransi
             }
         }
 
-        _hook = hook;
-        _gasLimit = gasLimit;
+        TransferHookStorage storage $ = _getTransferHookStorage();
+        $.hook = hook;
+        $.gasLimit = gasLimit;
 
         emit TransferHookUpdated(hook, gasLimit);
         _emitExtensionConfigured(ExtensionIds.TRANSFER_HOOK);

@@ -21,21 +21,35 @@ import {BehaviorFlags} from "../libraries/BehaviorFlags.sol";
  *
  *      The obvious way to compose ERC-20 extensions is for each module to override `_update` and call
  *      `super._update`. It works, and it is a trap: the execution order then falls out of C3 linearisation,
- *      so `is Fee, Restriction` and `is Restriction, Fee` behave differently.
+ *      so `is Fee, Restriction` and `is Restriction, Fee` behave differently. Worse, a module that splits a
+ *      transfer into two `super._update` calls — which any fee module must — sends both halves back through
+ *      every module below it, so a restriction module ends up screening the fee leg as if it were a user
+ *      transfer, against the fee vault's address and the fee's amount.
  *
  *      Here, `_update` is overridden exactly once, and modules override *phases* instead. The order is
  *      fixed in one readable function, a module cannot change it by being listed first, and each phase sees
  *      the arguments it was designed for.
  *
- *      Built on `ERC20Upgradeable` rather than `ERC20` so that one set of modules serves both an immutable
- *      token and a proxied one. The only thing that changes at runtime is which slot the balance mapping
- *      lives in; every function, event and revert an integrator can observe is identical.
+ *      ## Storage
+ *
+ *      All state lives in an ERC-7201 namespace. That is required for a proxied variant and free for the
+ *      immutable one, and it means a module can be mixed into a token in any position without its storage
+ *      moving.
+ *
+ * @custom:storage-location erc7201:berc.storage.ExtensionRegistry
  */
 abstract contract ERC20ExtensionCore is Initializable, ERC20Upgradeable, IERC20Extensions, IERC20Behavior {
-    bytes4[] private _extensionIds;
-    mapping(bytes4 id => bool) private _extensionEnabled;
-    uint256 private _behaviorFlags;
-    bool private _extensionsSealed;
+    /// @custom:storage-location erc7201:berc.storage.ExtensionRegistry
+    struct ExtensionRegistryStorage {
+        bytes4[] ids;
+        mapping(bytes4 id => bool) enabled;
+        uint256 behaviorFlags;
+        bool isSealed;
+    }
+
+    // keccak256(abi.encode(uint256(keccak256("berc.storage.ExtensionRegistry")) - 1)) & ~bytes32(uint256(0xff))
+    bytes32 private constant EXTENSION_REGISTRY_STORAGE =
+        0x73de07cf09e3d27a660e4065029788fb1c84a63adfe4aa03b3627cfea2944900;
 
     /// @notice The same extension was registered twice.
     error ERC20ExtensionAlreadyRegistered(bytes4 extensionId);
@@ -51,6 +65,12 @@ abstract contract ERC20ExtensionCore is Initializable, ERC20Upgradeable, IERC20E
 
     /// @notice A fee module returned a fee larger than the amount being transferred.
     error ERC20FeeExceedsAmount(uint256 fee, uint256 amount);
+
+    function _getExtensionRegistryStorage() private pure returns (ExtensionRegistryStorage storage $) {
+        assembly ("memory-safe") {
+            $.slot := EXTENSION_REGISTRY_STORAGE
+        }
+    }
 
     function __ERC20ExtensionCore_init() internal onlyInitializing {}
 
@@ -76,9 +96,10 @@ abstract contract ERC20ExtensionCore is Initializable, ERC20Upgradeable, IERC20E
      *
      *      3. **The transfer itself**, for `value - fee`.
      *
-     *      4. **After-transfer work**, last and only once balances have settled, so a module reading state
-     *         there cannot observe a half-applied transfer. Skipped for mint and burn as well: a module
-     *         watching transfers should not be handed a supply change dressed as one.
+     *      4. **The hook**, last and only after balances have settled, so the hook observes a consistent
+     *         state and cannot be used to observe a half-applied transfer. `ERC20TransferHook` additionally
+     *         wraps this whole function in a reentrancy guard; see that contract for why the guard belongs
+     *         there and not here.
      */
     function _update(address from, address to, uint256 value) internal virtual override {
         _checkTransferAllowed(from, to, value);
@@ -140,26 +161,28 @@ abstract contract ERC20ExtensionCore is Initializable, ERC20Upgradeable, IERC20E
 
     /// @dev Registers one extension and the behaviours it brings. Called from a module's initialiser.
     function _registerExtension(bytes4 extensionId, uint256 flags) internal onlyInitializing {
-        if (_extensionsSealed) revert ERC20ExtensionSetSealed();
-        if (_extensionEnabled[extensionId]) revert ERC20ExtensionAlreadyRegistered(extensionId);
+        ExtensionRegistryStorage storage $ = _getExtensionRegistryStorage();
+        if ($.isSealed) revert ERC20ExtensionSetSealed();
+        if ($.enabled[extensionId]) revert ERC20ExtensionAlreadyRegistered(extensionId);
         if (flags & ~BehaviorFlags.ALL != 0) revert ERC20UnknownBehaviorFlag(flags);
 
-        _extensionEnabled[extensionId] = true;
-        _extensionIds.push(extensionId);
-        _behaviorFlags |= flags;
+        $.enabled[extensionId] = true;
+        $.ids.push(extensionId);
+        $.behaviorFlags |= flags;
     }
 
     /**
      * @notice Freezes the extension set.
      * @dev **Every assembly must call this as the last step of its constructor or initialiser.** Until it
-     *      does, {extensions}, {hasExtension} and {behaviorFlags} all revert, so an assembly that forgets has
-     *      no discovery surface at all rather than a quietly incomplete one. Checking a flag on the transfer
-     *      path instead would tax every transfer forever to catch a mistake that can only be made once, at
-     *      deployment.
+     *      does, {extensions}, {hasExtension}, {extensionData} and {behaviorFlags} all revert, so an
+     *      assembly that forgets has no discovery surface at all rather than a quietly incomplete one.
+     *      Checking a flag on the transfer path instead would tax every transfer forever to catch a mistake
+     *      that can only be made once, at deployment.
      */
     function _sealExtensions() internal onlyInitializing {
-        if (_extensionsSealed) revert ERC20ExtensionSetSealed();
-        _extensionsSealed = true;
+        ExtensionRegistryStorage storage $ = _getExtensionRegistryStorage();
+        if ($.isSealed) revert ERC20ExtensionSetSealed();
+        $.isSealed = true;
     }
 
     /// @dev Emits {ExtensionConfigured} carrying the extension's full configuration after the change.
@@ -167,20 +190,28 @@ abstract contract ERC20ExtensionCore is Initializable, ERC20Upgradeable, IERC20E
         emit ExtensionConfigured(extensionId, extensionData(extensionId));
     }
 
+    /**
+     * @dev Every configuration entry point in every module routes through here, passing its own extension
+     *      ID. An assembly implements this once and dispatches on the ID, which keeps per-extension
+     *      authorities possible without any module having to know what access-control scheme is in use.
+     *
+     *      Left abstract on purpose: an assembly must state its authorisation policy rather than inherit a
+     *      default that might be permissive.
+     */
+    function _authorizeExtensionConfig(bytes4 extensionId) internal view virtual;
+
     // -----------------------------------------------------------------------------------------------
     // Discovery
     // -----------------------------------------------------------------------------------------------
 
     /// @inheritdoc IERC20Extensions
     function extensions() public view virtual returns (bytes4[] memory) {
-        _requireSealed();
-        return _extensionIds;
+        return _sealedStorage().ids;
     }
 
     /// @inheritdoc IERC20Extensions
     function hasExtension(bytes4 extensionId) public view virtual returns (bool) {
-        _requireSealed();
-        return _extensionEnabled[extensionId];
+        return _sealedStorage().enabled[extensionId];
     }
 
     /**
@@ -191,8 +222,7 @@ abstract contract ERC20ExtensionCore is Initializable, ERC20Upgradeable, IERC20E
      *      extend {_extensionData} instead, which this reaches only after both checks have passed.
      */
     function extensionData(bytes4 extensionId) public view returns (bytes memory) {
-        _requireSealed();
-        if (!_extensionEnabled[extensionId]) revert ERC20ExtensionNotEnabled(extensionId);
+        if (!_sealedStorage().enabled[extensionId]) revert ERC20ExtensionNotEnabled(extensionId);
         return _extensionData(extensionId);
     }
 
@@ -208,21 +238,11 @@ abstract contract ERC20ExtensionCore is Initializable, ERC20Upgradeable, IERC20E
 
     /// @inheritdoc IERC20Behavior
     function behaviorFlags() public view virtual returns (uint256) {
-        _requireSealed();
-        return _behaviorFlags;
+        return _sealedStorage().behaviorFlags;
     }
 
-    function _requireSealed() private view {
-        if (!_extensionsSealed) revert ERC20ExtensionSetNotSealed();
+    function _sealedStorage() private view returns (ExtensionRegistryStorage storage $) {
+        $ = _getExtensionRegistryStorage();
+        if (!$.isSealed) revert ERC20ExtensionSetNotSealed();
     }
-
-    /**
-     * @dev Every configuration entry point in every module routes through here, passing its own extension
-     *      ID. An assembly implements this once and dispatches on the ID, which keeps per-extension
-     *      authorities possible without any module having to know what access-control scheme is in use.
-     *
-     *      Left abstract on purpose: an assembly must state its authorisation policy rather than inherit a
-     *      default that might be permissive.
-     */
-    function _authorizeExtensionConfig(bytes4 extensionId) internal view virtual;
 }

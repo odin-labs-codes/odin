@@ -29,6 +29,8 @@ import {ERC20ExtensionCore} from "./ERC20ExtensionCore.sol";
  *        account nobody may transact with is a mistake with no upside.
  *
  *      This module declares both `PAUSABLE` and `BLOCKLIST`, since it provides both.
+ *
+ * @custom:storage-location erc7201:berc.storage.TransferRestriction
  */
 abstract contract ERC20TransferRestriction is ERC20ExtensionCore, IERC20TransferRestriction {
     /// @notice The transfer is allowed.
@@ -43,8 +45,21 @@ abstract contract ERC20TransferRestriction is ERC20ExtensionCore, IERC20Transfer
     /// @notice The receiving account is frozen.
     uint8 public constant RESTRICTION_RECIPIENT_FROZEN = 3;
 
-    bool private _paused;
-    mapping(address account => bool frozen) private _frozen;
+    /// @custom:storage-location erc7201:berc.storage.TransferRestriction
+    struct TransferRestrictionStorage {
+        bool paused;
+        mapping(address account => bool frozen) frozen;
+    }
+
+    // keccak256(abi.encode(uint256(keccak256("berc.storage.TransferRestriction")) - 1)) & ~bytes32(uint256(0xff))
+    bytes32 private constant TRANSFER_RESTRICTION_STORAGE =
+        0x39f4fb228d5484c131c0e57f7df22064a0d89a65b73b5588d8e9c36b240edb00;
+
+    function _getTransferRestrictionStorage() private pure returns (TransferRestrictionStorage storage $) {
+        assembly ("memory-safe") {
+            $.slot := TRANSFER_RESTRICTION_STORAGE
+        }
+    }
 
     function __ERC20TransferRestriction_init() internal onlyInitializing {
         _registerExtension(ExtensionIds.TRANSFER_RESTRICTION, BehaviorFlags.PAUSABLE | BehaviorFlags.BLOCKLIST);
@@ -56,11 +71,13 @@ abstract contract ERC20TransferRestriction is ERC20ExtensionCore, IERC20Transfer
 
     /// @inheritdoc IERC20TransferRestriction
     function detectTransferRestriction(address from, address to, uint256) public view virtual returns (uint8) {
+        TransferRestrictionStorage storage $ = _getTransferRestrictionStorage();
+
         if (from != address(0) && to != address(0)) {
-            if (_paused) return RESTRICTION_PAUSED;
-            if (_frozen[from]) return RESTRICTION_SENDER_FROZEN;
-            if (_frozen[to]) return RESTRICTION_RECIPIENT_FROZEN;
-        } else if (from == address(0) && _frozen[to]) {
+            if ($.paused) return RESTRICTION_PAUSED;
+            if ($.frozen[from]) return RESTRICTION_SENDER_FROZEN;
+            if ($.frozen[to]) return RESTRICTION_RECIPIENT_FROZEN;
+        } else if (from == address(0) && $.frozen[to]) {
             return RESTRICTION_RECIPIENT_FROZEN;
         }
 
@@ -78,18 +95,18 @@ abstract contract ERC20TransferRestriction is ERC20ExtensionCore, IERC20Transfer
 
     /// @notice Whether all transfers are currently paused.
     function transfersPaused() public view virtual returns (bool) {
-        return _paused;
+        return _getTransferRestrictionStorage().paused;
     }
 
     /// @notice Whether `account` is frozen.
     function isFrozen(address account) public view virtual returns (bool) {
-        return _frozen[account];
+        return _getTransferRestrictionStorage().frozen[account];
     }
 
     /// @inheritdoc ERC20ExtensionCore
     function _extensionData(bytes4 extensionId) internal view virtual override returns (bytes memory) {
         if (extensionId == ExtensionIds.TRANSFER_RESTRICTION) {
-            return abi.encode(_paused);
+            return abi.encode(_getTransferRestrictionStorage().paused);
         }
         return super._extensionData(extensionId);
     }
@@ -113,7 +130,7 @@ abstract contract ERC20TransferRestriction is ERC20ExtensionCore, IERC20Transfer
     function setTransfersPaused(bool paused) external virtual {
         _authorizeExtensionConfig(ExtensionIds.TRANSFER_RESTRICTION);
 
-        _paused = paused;
+        _getTransferRestrictionStorage().paused = paused;
 
         emit TransferPauseUpdated(paused);
         _emitExtensionConfigured(ExtensionIds.TRANSFER_RESTRICTION);
@@ -128,7 +145,7 @@ abstract contract ERC20TransferRestriction is ERC20ExtensionCore, IERC20Transfer
     function setFrozen(address account, bool frozen) external virtual {
         _authorizeExtensionConfig(ExtensionIds.TRANSFER_RESTRICTION);
 
-        _frozen[account] = frozen;
+        _getTransferRestrictionStorage().frozen[account] = frozen;
 
         emit AccountFrozen(account, frozen);
     }

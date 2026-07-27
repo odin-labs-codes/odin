@@ -35,6 +35,8 @@ import {ERC20ExtensionCore} from "./ERC20ExtensionCore.sol";
  *      `fee <= amount * MAX_FEE_BASIS_POINTS / 10_000`
  *      holds for the lifetime of the deployment no matter what the authority does. A fee with no ceiling at
  *      all is indistinguishable from theft on a delay.
+ *
+ * @custom:storage-location erc7201:berc.storage.TransferFee
  */
 abstract contract ERC20TransferFee is ERC20ExtensionCore, IERC20TransferFee {
     /// @notice Basis-point denominator. 10_000 basis points is 100%.
@@ -47,10 +49,23 @@ abstract contract ERC20TransferFee is ERC20ExtensionCore, IERC20TransferFee {
      */
     uint16 public constant MAX_FEE_BASIS_POINTS = 1_000;
 
-    uint16 private _basisPoints;
-    address private _feeVault;
-    uint256 private _maximumFee;
-    mapping(address account => bool exempt) private _feeExempt;
+    /// @custom:storage-location erc7201:berc.storage.TransferFee
+    struct TransferFeeStorage {
+        uint16 basisPoints;
+        address feeVault;
+        uint256 maximumFee;
+        mapping(address account => bool exempt) feeExempt;
+    }
+
+    // keccak256(abi.encode(uint256(keccak256("berc.storage.TransferFee")) - 1)) & ~bytes32(uint256(0xff))
+    bytes32 private constant TRANSFER_FEE_STORAGE =
+        0xdd69031206c835003421b46d33beabb676aa67ba324dd4f2c722dae5d7ba4800;
+
+    function _getTransferFeeStorage() private pure returns (TransferFeeStorage storage $) {
+        assembly ("memory-safe") {
+            $.slot := TRANSFER_FEE_STORAGE
+        }
+    }
 
     function __ERC20TransferFee_init() internal onlyInitializing {
         _registerExtension(ExtensionIds.TRANSFER_FEE, BehaviorFlags.FEE_ON_TRANSFER);
@@ -65,17 +80,19 @@ abstract contract ERC20TransferFee is ERC20ExtensionCore, IERC20TransferFee {
         if (from == address(0) || to == address(0)) return 0;
         if (isFeeExempt(from) || isFeeExempt(to)) return 0;
 
-        uint16 basisPoints = _basisPoints;
+        TransferFeeStorage storage $ = _getTransferFeeStorage();
+        uint16 basisPoints = $.basisPoints;
         if (basisPoints == 0) return 0;
 
-        return Math.min(Math.mulDiv(amount, basisPoints, FEE_BASIS_POINT_DENOMINATOR), _maximumFee);
+        return Math.min(Math.mulDiv(amount, basisPoints, FEE_BASIS_POINT_DENOMINATOR), $.maximumFee);
     }
 
     /// @inheritdoc IERC20TransferFee
     function isFeeExempt(address account) public view virtual returns (bool) {
         // The vault is exempt by construction: charging a fee on the vault's own withdrawals would make the
         // fee recursive and would let it accumulate balance it can never fully move.
-        return _feeExempt[account] || (account != address(0) && account == _feeVault);
+        TransferFeeStorage storage $ = _getTransferFeeStorage();
+        return $.feeExempt[account] || (account != address(0) && account == $.feeVault);
     }
 
     /// @inheritdoc IERC20TransferFee
@@ -84,17 +101,18 @@ abstract contract ERC20TransferFee is ERC20ExtensionCore, IERC20TransferFee {
         // produce — was considered and rejected: the only caps it would lower are ones near
         // `type(uint256).max`, so it would cost a `mulDiv` on every call to replace one astronomical
         // number with another, while leaving the bound just as loose for the caps that occur in practice.
-        return _basisPoints == 0 ? 0 : _maximumFee;
+        TransferFeeStorage storage $ = _getTransferFeeStorage();
+        return $.basisPoints == 0 ? 0 : $.maximumFee;
     }
 
     /// @inheritdoc IERC20TransferFee
     function feeVault() public view virtual override returns (address) {
-        return _feeVault;
+        return _getTransferFeeStorage().feeVault;
     }
 
     /// @inheritdoc IERC20TransferFee
     function feeBasisPoints() public view virtual override returns (uint16) {
-        return _basisPoints;
+        return _getTransferFeeStorage().basisPoints;
     }
 
     /// @inheritdoc IERC20TransferFee
@@ -111,7 +129,8 @@ abstract contract ERC20TransferFee is ERC20ExtensionCore, IERC20TransferFee {
     /// @inheritdoc ERC20ExtensionCore
     function _extensionData(bytes4 extensionId) internal view virtual override returns (bytes memory) {
         if (extensionId == ExtensionIds.TRANSFER_FEE) {
-            return abi.encode(_basisPoints, _maximumFee, _feeVault);
+            TransferFeeStorage storage $ = _getTransferFeeStorage();
+            return abi.encode($.basisPoints, $.maximumFee, $.feeVault);
         }
         return super._extensionData(extensionId);
     }
@@ -171,10 +190,11 @@ abstract contract ERC20TransferFee is ERC20ExtensionCore, IERC20TransferFee {
         if (amountOut == 0) return 0;
         if (isFeeExempt(from) || isFeeExempt(to)) return amountOut;
 
-        uint16 basisPoints = _basisPoints;
+        TransferFeeStorage storage $ = _getTransferFeeStorage();
+        uint16 basisPoints = $.basisPoints;
         if (basisPoints == 0) return amountOut;
 
-        uint256 cap = _maximumFee;
+        uint256 cap = $.maximumFee;
         uint256 k = FEE_BASIS_POINT_DENOMINATOR - basisPoints; // > 0: basisPoints <= MAX_FEE_BASIS_POINTS
 
         // `mulDiv` reverts when the *uncapped* inverse overflows, which says nothing about whether the real
@@ -211,7 +231,7 @@ abstract contract ERC20TransferFee is ERC20ExtensionCore, IERC20TransferFee {
         if (fee > 0) {
             // Its own leg, its own `Transfer` event: an indexer that only saw the net leg would report
             // supply vanishing.
-            _rawUpdate(from, _feeVault, fee);
+            _rawUpdate(from, _getTransferFeeStorage().feeVault, fee);
             emit TransferFeeCollected(from, to, fee);
         }
         return super._collectTransferFee(from, to, value) + fee;
@@ -230,10 +250,11 @@ abstract contract ERC20TransferFee is ERC20ExtensionCore, IERC20TransferFee {
 
         // A non-zero rate with no vault would send fees to address(0), which burns them and makes total
         // supply drift downwards on every transfer — a rebase nobody declared.
-        if (basisPoints > 0 && _feeVault == address(0)) revert ERC20FeeVaultNotSet();
+        TransferFeeStorage storage $ = _getTransferFeeStorage();
+        if (basisPoints > 0 && $.feeVault == address(0)) revert ERC20FeeVaultNotSet();
 
-        _basisPoints = basisPoints;
-        _maximumFee = newMaximumFee;
+        $.basisPoints = basisPoints;
+        $.maximumFee = newMaximumFee;
 
         emit FeeConfigUpdated(basisPoints, newMaximumFee);
         _emitExtensionConfigured(ExtensionIds.TRANSFER_FEE);
@@ -244,7 +265,7 @@ abstract contract ERC20TransferFee is ERC20ExtensionCore, IERC20TransferFee {
         _authorizeExtensionConfig(ExtensionIds.TRANSFER_FEE);
         if (newFeeVault == address(0)) revert ERC20InvalidFeeVault(newFeeVault);
 
-        _feeVault = newFeeVault;
+        _getTransferFeeStorage().feeVault = newFeeVault;
 
         emit FeeVaultUpdated(newFeeVault);
         _emitExtensionConfigured(ExtensionIds.TRANSFER_FEE);
@@ -254,7 +275,7 @@ abstract contract ERC20TransferFee is ERC20ExtensionCore, IERC20TransferFee {
     function setFeeExempt(address account, bool exempt) external virtual {
         _authorizeExtensionConfig(ExtensionIds.TRANSFER_FEE);
 
-        _feeExempt[account] = exempt;
+        _getTransferFeeStorage().feeExempt[account] = exempt;
 
         emit FeeExemptionUpdated(account, exempt);
     }
