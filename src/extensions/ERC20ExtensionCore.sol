@@ -172,6 +172,17 @@ abstract contract ERC20ExtensionCore is Initializable, ERC20Upgradeable, IERC20E
     }
 
     /**
+     * @dev Declares behaviour that is not tied to an extension module. `UPGRADEABLE` is the case this
+     *      exists for: it is a property of how the token is deployed, not of anything it inherits.
+     */
+    function _declareBehavior(uint256 flags) internal onlyInitializing {
+        if (flags & ~BehaviorFlags.ALL != 0) revert ERC20UnknownBehaviorFlag(flags);
+        ExtensionRegistryStorage storage $ = _getExtensionRegistryStorage();
+        if ($.isSealed) revert ERC20ExtensionSetSealed();
+        $.behaviorFlags |= flags;
+    }
+
+    /**
      * @notice Freezes the extension set.
      * @dev **Every assembly must call this as the last step of its constructor or initialiser.** Until it
      *      does, {extensions}, {hasExtension}, {extensionData} and {behaviorFlags} all revert, so an
