@@ -6,6 +6,7 @@ import {ERC20Upgradeable} from "@openzeppelin/contracts-upgradeable/token/ERC20/
 
 import {AccountState, IERC20AccountState} from "../interfaces/IERC20AccountState.sol";
 import {IERC20Behavior} from "../interfaces/IERC20Behavior.sol";
+import {IERC20CheckedTransfer} from "../interfaces/IERC20CheckedTransfer.sol";
 import {IERC20Extensions} from "../interfaces/IERC20Extensions.sol";
 import {BehaviorFlags} from "../libraries/BehaviorFlags.sol";
 
@@ -44,7 +45,8 @@ abstract contract ERC20ExtensionCore is
     ERC20Upgradeable,
     IERC20Extensions,
     IERC20Behavior,
-    IERC20AccountState
+    IERC20AccountState,
+    IERC20CheckedTransfer
 {
     /// @custom:storage-location erc7201:berc.storage.ExtensionRegistry
     struct ExtensionRegistryStorage {
@@ -165,6 +167,52 @@ abstract contract ERC20ExtensionCore is
      *      `to`. Never called for mint or burn. Modules must call `super._afterTransfer`.
      */
     function _afterTransfer(address from, address to, uint256 value) internal virtual {}
+
+    // -----------------------------------------------------------------------------------------------
+    // Checked transfers
+    // -----------------------------------------------------------------------------------------------
+
+    /// @inheritdoc IERC20CheckedTransfer
+    function transferChecked(address to, uint256 amount, uint256 minAmountReceived)
+        public
+        virtual
+        returns (uint256 received)
+    {
+        received = _measuredTransfer(_msgSender(), to, amount);
+        if (received < minAmountReceived) {
+            revert ERC20CheckedTransferUnderMinimum(received, minAmountReceived);
+        }
+    }
+
+    /// @inheritdoc IERC20CheckedTransfer
+    function transferFromChecked(address from, address to, uint256 amount, uint256 minAmountReceived)
+        public
+        virtual
+        returns (uint256 received)
+    {
+        _spendAllowance(from, _msgSender(), amount);
+        received = _measuredTransfer(from, to, amount);
+        if (received < minAmountReceived) {
+            revert ERC20CheckedTransferUnderMinimum(received, minAmountReceived);
+        }
+    }
+
+    /**
+     * @dev Runs the transfer and reports what `to` actually gained, by reading its balance either side of
+     *      the call rather than asking any module to predict it. Measurement is what makes the guarantee
+     *      hold for combinations nobody enumerated: whatever the installed extensions do between these two
+     *      reads, the number returned is the number that landed.
+     *
+     *      A sender transferring to itself sees its balance fall by the fee, never rise, so the increase is
+     *      clamped at zero instead of underflowing into a panic. Zero is the honest answer — nothing
+     *      arrived that was not already there.
+     */
+    function _measuredTransfer(address from, address to, uint256 amount) private returns (uint256) {
+        uint256 balanceBefore = balanceOf(to);
+        _transfer(from, to, amount);
+        uint256 balanceAfter = balanceOf(to);
+        return balanceAfter > balanceBefore ? balanceAfter - balanceBefore : 0;
+    }
 
     // -----------------------------------------------------------------------------------------------
     // Registration — construction only
