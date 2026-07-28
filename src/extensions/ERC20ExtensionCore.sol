@@ -4,6 +4,7 @@ pragma solidity ^0.8.24;
 import {Initializable} from "@openzeppelin/contracts-upgradeable/proxy/utils/Initializable.sol";
 import {ERC20Upgradeable} from "@openzeppelin/contracts-upgradeable/token/ERC20/ERC20Upgradeable.sol";
 
+import {AccountState, IERC20AccountState} from "../interfaces/IERC20AccountState.sol";
 import {IERC20Behavior} from "../interfaces/IERC20Behavior.sol";
 import {IERC20Extensions} from "../interfaces/IERC20Extensions.sol";
 import {BehaviorFlags} from "../libraries/BehaviorFlags.sol";
@@ -38,13 +39,20 @@ import {BehaviorFlags} from "../libraries/BehaviorFlags.sol";
  *
  * @custom:storage-location erc7201:berc.storage.ExtensionRegistry
  */
-abstract contract ERC20ExtensionCore is Initializable, ERC20Upgradeable, IERC20Extensions, IERC20Behavior {
+abstract contract ERC20ExtensionCore is
+    Initializable,
+    ERC20Upgradeable,
+    IERC20Extensions,
+    IERC20Behavior,
+    IERC20AccountState
+{
     /// @custom:storage-location erc7201:berc.storage.ExtensionRegistry
     struct ExtensionRegistryStorage {
         bytes4[] ids;
         mapping(bytes4 id => bool) enabled;
         uint256 behaviorFlags;
         bool isSealed;
+        mapping(address account => uint64 timestamp) configuredAt;
     }
 
     // keccak256(abi.encode(uint256(keccak256("berc.storage.ExtensionRegistry")) - 1)) & ~bytes32(uint256(0xff))
@@ -203,6 +211,11 @@ abstract contract ERC20ExtensionCore is Initializable, ERC20Upgradeable, IERC20E
         $.isSealed = true;
     }
 
+    /// @dev Records that per-account extension state changed, for {accountState}.
+    function _touchAccountState(address account) internal {
+        _getExtensionRegistryStorage().configuredAt[account] = uint64(block.timestamp);
+    }
+
     /// @dev Emits {ExtensionConfigured} carrying the extension's full configuration after the change.
     function _emitExtensionConfigured(bytes4 extensionId) internal {
         emit ExtensionConfigured(extensionId, extensionData(extensionId));
@@ -257,6 +270,25 @@ abstract contract ERC20ExtensionCore is Initializable, ERC20Upgradeable, IERC20E
     /// @inheritdoc IERC20Behavior
     function behaviorFlags() public view virtual returns (uint256) {
         return _sealedStorage().behaviorFlags;
+    }
+
+    /// @inheritdoc IERC20AccountState
+    function accountState(address account) public view virtual returns (AccountState memory) {
+        return AccountState({
+            frozen: _accountFrozen(account),
+            feeExempt: _accountFeeExempt(account),
+            configuredAt: _getExtensionRegistryStorage().configuredAt[account]
+        });
+    }
+
+    /// @dev Overridden by the restriction module. Neutral value when that module is not installed.
+    function _accountFrozen(address) internal view virtual returns (bool) {
+        return false;
+    }
+
+    /// @dev Overridden by the fee module. Neutral value when that module is not installed.
+    function _accountFeeExempt(address) internal view virtual returns (bool) {
+        return false;
     }
 
     function _sealedStorage() private view returns (ExtensionRegistryStorage storage $) {

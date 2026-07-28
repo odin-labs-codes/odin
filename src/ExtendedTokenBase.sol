@@ -162,6 +162,26 @@ abstract contract ExtendedTokenBase is
         return super._extensionData(extensionId);
     }
 
+    function _accountFrozen(address account)
+        internal
+        view
+        virtual
+        override(ERC20ExtensionCore, ERC20TransferRestriction)
+        returns (bool)
+    {
+        return super._accountFrozen(account);
+    }
+
+    function _accountFeeExempt(address account)
+        internal
+        view
+        virtual
+        override(ERC20ExtensionCore, ERC20TransferFee)
+        returns (bool)
+    {
+        return super._accountFeeExempt(account);
+    }
+
     /// @inheritdoc ERC20ExtensionCore
     function _authorizeExtensionConfig(bytes4 extensionId) internal view virtual override {
         if (extensionId == ExtensionIds.ONCHAIN_METADATA) {

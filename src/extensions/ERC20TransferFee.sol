@@ -135,6 +135,11 @@ abstract contract ERC20TransferFee is ERC20ExtensionCore, IERC20TransferFee {
         return super._extensionData(extensionId);
     }
 
+    /// @inheritdoc ERC20ExtensionCore
+    function _accountFeeExempt(address account) internal view virtual override returns (bool) {
+        return isFeeExempt(account);
+    }
+
     // -----------------------------------------------------------------------------------------------
     // Exact-output transfers
     // -----------------------------------------------------------------------------------------------
@@ -265,7 +270,16 @@ abstract contract ERC20TransferFee is ERC20ExtensionCore, IERC20TransferFee {
         _authorizeExtensionConfig(ExtensionIds.TRANSFER_FEE);
         if (newFeeVault == address(0)) revert ERC20InvalidFeeVault(newFeeVault);
 
-        _getTransferFeeStorage().feeVault = newFeeVault;
+        TransferFeeStorage storage $ = _getTransferFeeStorage();
+        address previousVault = $.feeVault;
+        $.feeVault = newFeeVault;
+
+        // The vault's exemption is implied by being the vault, so rotating it silently changes the
+        // effective `feeExempt` of two accounts that were never named in a `setFeeExempt` call. Both are
+        // touched so `accountState().configuredAt` still answers "when did this account's treatment last
+        // change" rather than pointing at a change that never mentioned them.
+        if (previousVault != address(0)) _touchAccountState(previousVault);
+        _touchAccountState(newFeeVault);
 
         emit FeeVaultUpdated(newFeeVault);
         _emitExtensionConfigured(ExtensionIds.TRANSFER_FEE);
@@ -276,6 +290,7 @@ abstract contract ERC20TransferFee is ERC20ExtensionCore, IERC20TransferFee {
         _authorizeExtensionConfig(ExtensionIds.TRANSFER_FEE);
 
         _getTransferFeeStorage().feeExempt[account] = exempt;
+        _touchAccountState(account);
 
         emit FeeExemptionUpdated(account, exempt);
     }

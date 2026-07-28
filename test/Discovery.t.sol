@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.24;
 
+import {AccountState} from "../src/interfaces/IERC20AccountState.sol";
 import {IERC20Extensions} from "../src/interfaces/IERC20Extensions.sol";
 import {ExtensionIds} from "../src/libraries/ExtensionIds.sol";
 
@@ -38,6 +39,36 @@ contract DiscoveryTest is BaseTest {
 
     function test_ImmutableTokenDoesNotDeclareUpgradeable() public view {
         assertEq(token.behaviorFlags() & (1 << 6), 0);
+    }
+
+    function test_AccountStateAnswersForEveryModuleAtOnce() public {
+        vm.startPrank(admin);
+        token.setFrozen(alice, true);
+        token.setFeeExempt(alice, true);
+        vm.stopPrank();
+
+        AccountState memory state = token.accountState(alice);
+
+        assertTrue(state.frozen);
+        assertTrue(state.feeExempt);
+        assertEq(state.configuredAt, uint64(block.timestamp));
+    }
+
+    function test_AnUntouchedAccountReadsAsNeutralRatherThanReverting() public view {
+        AccountState memory state = token.accountState(carol);
+
+        assertFalse(state.frozen);
+        assertFalse(state.feeExempt);
+        assertEq(state.configuredAt, 0);
+    }
+
+    function test_RotatingTheVaultTouchesBothAddresses() public {
+        vm.warp(1_000_000);
+        vm.prank(admin);
+        token.setFeeVault(carol);
+
+        assertEq(token.accountState(carol).configuredAt, 1_000_000);
+        assertEq(token.accountState(vault).configuredAt, 1_000_000);
     }
 
     function test_ExtensionDataReportsUriAndKeyCount() public {

@@ -111,6 +111,11 @@ abstract contract ERC20TransferRestriction is ERC20ExtensionCore, IERC20Transfer
         return super._extensionData(extensionId);
     }
 
+    /// @inheritdoc ERC20ExtensionCore
+    function _accountFrozen(address account) internal view virtual override returns (bool) {
+        return isFrozen(account);
+    }
+
     // -----------------------------------------------------------------------------------------------
     // Transfer pipeline — phase 1
     // -----------------------------------------------------------------------------------------------
@@ -146,6 +151,7 @@ abstract contract ERC20TransferRestriction is ERC20ExtensionCore, IERC20Transfer
         _authorizeExtensionConfig(ExtensionIds.TRANSFER_RESTRICTION);
 
         _getTransferRestrictionStorage().frozen[account] = frozen;
+        _touchAccountState(account);
 
         emit AccountFrozen(account, frozen);
     }
