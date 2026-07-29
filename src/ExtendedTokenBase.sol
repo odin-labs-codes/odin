@@ -13,7 +13,7 @@ import {ExtensionIds} from "./libraries/ExtensionIds.sol";
 
 /**
  * @title ExtendedTokenBase
- * @notice The shared assembly behind the reference tokens: four extension modules, one role per authority,
+ * @notice The shared assembly behind both reference tokens: four extension modules, one role per authority,
  *         and nothing else.
  *
  * @dev Extracted from `ExtendedToken` so that an immutable deployment and a proxied one can be two thin
@@ -60,24 +60,33 @@ abstract contract ExtendedTokenBase is
     /// @notice The admin cannot be the zero address; the token would have no reachable authority.
     error ExtendedTokenInvalidAdmin();
 
+    /// @notice An extension was requested that this assembly does not know how to install.
+    error ExtendedTokenUnknownExtension(bytes4 extensionId);
+
     /**
-     * @dev `_sealExtensions()` is deliberately *not* called here: the concrete token calls it last, after it
+     * @dev `extensionIds` names the extensions to install, using the same identifiers {extensions} will
+     *      report back. Duplicates are rejected by `_registerExtension`, and anything this assembly does not
+     *      recognise is rejected here, so the set a caller asks for is exactly the set they get or the
+     *      deployment fails.
+     *
+     *      `_sealExtensions()` is deliberately *not* called here: the concrete token calls it last, after it
      *      has had a chance to declare deployment-level behaviour of its own.
      */
-    function __ExtendedTokenBase_init(string memory name_, string memory symbol_, address admin)
-        internal
-        onlyInitializing
-    {
+    function __ExtendedTokenBase_init(
+        string memory name_,
+        string memory symbol_,
+        address admin,
+        bytes4[] memory extensionIds
+    ) internal onlyInitializing {
         if (admin == address(0)) revert ExtendedTokenInvalidAdmin();
 
         __ERC20_init(name_, symbol_);
         __AccessControl_init();
         __ERC20ExtensionCore_init();
 
-        __ERC20OnchainMetadata_init();
-        __ERC20TransferFee_init();
-        __ERC20TransferRestriction_init();
-        __ERC20TransferHook_init();
+        for (uint256 i = 0; i < extensionIds.length; ++i) {
+            if (!_initializeExtension(extensionIds[i])) revert ExtendedTokenUnknownExtension(extensionIds[i]);
+        }
 
         // Declared by every assembly built on this base, whatever extensions it installs, because {mint}
         // and {burn} are on this contract and neither is optional. Leaving them out would let a token with
@@ -92,6 +101,35 @@ abstract contract ExtendedTokenBase is
         _grantRole(FEE_CONFIG_ROLE, admin);
         _grantRole(RESTRICTION_ROLE, admin);
         _grantRole(HOOK_CONFIG_ROLE, admin);
+    }
+
+    /**
+     * @dev Installs one extension by identifier, returning false if it is not one of this assembly's.
+     *      An assembly that inherits further modules overrides this, handles its own identifiers, and
+     *      delegates the rest upward.
+     */
+    function _initializeExtension(bytes4 extensionId) internal virtual onlyInitializing returns (bool) {
+        if (extensionId == ExtensionIds.ONCHAIN_METADATA) {
+            __ERC20OnchainMetadata_init();
+        } else if (extensionId == ExtensionIds.TRANSFER_FEE) {
+            __ERC20TransferFee_init();
+        } else if (extensionId == ExtensionIds.TRANSFER_RESTRICTION) {
+            __ERC20TransferRestriction_init();
+        } else if (extensionId == ExtensionIds.TRANSFER_HOOK) {
+            __ERC20TransferHook_init();
+        } else {
+            return false;
+        }
+        return true;
+    }
+
+    /// @dev The four modules this assembly carries, which is what both reference tokens install.
+    function _defaultExtensions() internal pure returns (bytes4[] memory extensionIds) {
+        extensionIds = new bytes4[](4);
+        extensionIds[0] = ExtensionIds.ONCHAIN_METADATA;
+        extensionIds[1] = ExtensionIds.TRANSFER_FEE;
+        extensionIds[2] = ExtensionIds.TRANSFER_RESTRICTION;
+        extensionIds[3] = ExtensionIds.TRANSFER_HOOK;
     }
 
     /// @notice Creates `value` new tokens for `to`.

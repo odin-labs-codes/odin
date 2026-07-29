@@ -39,7 +39,7 @@ contract ExtendedToken is ExtendedTokenBase {
      *      way to deploy an upgradeable-library contract without a proxy.
      */
     function _initializeExtendedToken(string memory name_, string memory symbol_, address admin) private initializer {
-        __ExtendedTokenBase_init(name_, symbol_, admin);
+        __ExtendedTokenBase_init(name_, symbol_, admin, _defaultExtensions());
         // Fixes the extension set. Must be last.
         _sealExtensions();
     }

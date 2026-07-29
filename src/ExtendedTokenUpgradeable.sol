@@ -50,7 +50,7 @@ contract ExtendedTokenUpgradeable is ExtendedTokenBase, UUPSUpgradeable {
      * @param admin Receives every role, including {UPGRADER_ROLE}. Expected to redistribute them.
      */
     function initialize(string memory name_, string memory symbol_, address admin) external initializer {
-        __ExtendedTokenBase_init(name_, symbol_, admin);
+        __ExtendedTokenBase_init(name_, symbol_, admin, _defaultExtensions());
         __UUPSUpgradeable_init();
 
         _grantRole(UPGRADER_ROLE, admin);
