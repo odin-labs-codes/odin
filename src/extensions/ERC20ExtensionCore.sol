@@ -15,9 +15,10 @@ import {BehaviorFlags} from "../libraries/BehaviorFlags.sol";
  * @notice The registry every extension module registers with, and the one place transfer phase order is
  *         decided.
  *
- * @dev Modules register themselves from their own initialiser, which is `onlyInitializing` and so can only
- *      run while the token is being constructed. Nothing can be added afterwards, which is what makes the
- *      set an integrator reads worth caching.
+ * @dev Token-2022 gets its guarantees from a runtime: one program owns every mint, walks the account's TLV
+ *      extensions in a fixed order, and no token author can change that order. The EVM has no such runtime,
+ *      so the ordering has to be written down somewhere and enforced by construction. That somewhere is
+ *      {_update} below.
  *
  *      ## Why this contract owns `_update` alone
  *
@@ -34,9 +35,9 @@ import {BehaviorFlags} from "../libraries/BehaviorFlags.sol";
  *
  *      ## Storage
  *
- *      All state lives in an ERC-7201 namespace. That is required for a proxied variant and free for the
- *      immutable one, and it means a module can be mixed into a token in any position without its storage
- *      moving.
+ *      All state lives in an ERC-7201 namespace. That is required for the upgradeable variant and free for
+ *      the immutable one, and it means a module can be mixed into a token in any position without its
+ *      storage moving.
  *
  * @custom:storage-location erc7201:berc.storage.ExtensionRegistry
  */
@@ -55,6 +56,7 @@ abstract contract ERC20ExtensionCore is
         uint256 behaviorFlags;
         bool isSealed;
         mapping(address account => uint64 timestamp) configuredAt;
+        uint64 configurationEpoch;
     }
 
     // keccak256(abi.encode(uint256(keccak256("berc.storage.ExtensionRegistry")) - 1)) & ~bytes32(uint256(0xff))
@@ -173,11 +175,17 @@ abstract contract ERC20ExtensionCore is
     // -----------------------------------------------------------------------------------------------
 
     /// @inheritdoc IERC20CheckedTransfer
-    function transferChecked(address to, uint256 amount, uint256 minAmountReceived)
+    function configurationEpoch() public view virtual returns (uint64) {
+        return _getExtensionRegistryStorage().configurationEpoch;
+    }
+
+    /// @inheritdoc IERC20CheckedTransfer
+    function transferChecked(address to, uint256 amount, uint256 minAmountReceived, uint64 expectedConfigurationEpoch)
         public
         virtual
         returns (uint256 received)
     {
+        _requireConfigurationEpoch(expectedConfigurationEpoch);
         received = _measuredTransfer(_msgSender(), to, amount);
         if (received < minAmountReceived) {
             revert ERC20CheckedTransferUnderMinimum(received, minAmountReceived);
@@ -185,11 +193,14 @@ abstract contract ERC20ExtensionCore is
     }
 
     /// @inheritdoc IERC20CheckedTransfer
-    function transferFromChecked(address from, address to, uint256 amount, uint256 minAmountReceived)
-        public
-        virtual
-        returns (uint256 received)
-    {
+    function transferFromChecked(
+        address from,
+        address to,
+        uint256 amount,
+        uint256 minAmountReceived,
+        uint64 expectedConfigurationEpoch
+    ) public virtual returns (uint256 received) {
+        _requireConfigurationEpoch(expectedConfigurationEpoch);
         _spendAllowance(from, _msgSender(), amount);
         received = _measuredTransfer(from, to, amount);
         if (received < minAmountReceived) {
@@ -214,20 +225,30 @@ abstract contract ERC20ExtensionCore is
         return balanceAfter > balanceBefore ? balanceAfter - balanceBefore : 0;
     }
 
+    /// @dev Shared with any module offering a checked entry point of its own, such as the fee module's
+    ///      exact-output pair.
+    function _requireConfigurationEpoch(uint64 expected) internal view {
+        if (expected == 0) return;
+        uint64 actual = _getExtensionRegistryStorage().configurationEpoch;
+        if (expected != actual) revert ERC20CheckedTransferEpochMismatch(expected, actual);
+    }
+
     // -----------------------------------------------------------------------------------------------
     // Registration — construction only
     // -----------------------------------------------------------------------------------------------
 
-    /// @dev Registers one extension and the behaviours it brings. Called from a module's initialiser.
+    /**
+     * @dev Registers one extension and the behaviours it brings. Called from a module's initialiser, so it
+     *      can only run while the token is being constructed or initialised.
+     */
     function _registerExtension(bytes4 extensionId, uint256 flags) internal onlyInitializing {
         ExtensionRegistryStorage storage $ = _getExtensionRegistryStorage();
         if ($.isSealed) revert ERC20ExtensionSetSealed();
         if ($.enabled[extensionId]) revert ERC20ExtensionAlreadyRegistered(extensionId);
-        if (flags & ~BehaviorFlags.ALL != 0) revert ERC20UnknownBehaviorFlag(flags);
 
         $.enabled[extensionId] = true;
         $.ids.push(extensionId);
-        $.behaviorFlags |= flags;
+        _declareBehavior(flags);
     }
 
     /**
@@ -245,7 +266,7 @@ abstract contract ERC20ExtensionCore is
      * @notice Freezes the extension set and validates that the declared behaviours are consistent.
      * @dev **Every assembly must call this as the last step of its constructor or initialiser.** Until it
      *      does, {extensions}, {hasExtension}, {extensionData} and {behaviorFlags} all revert, so an
-     *      assembly that forgets has no discovery surface at all rather than a quietly incomplete one.
+     *      assembly that forgets has no discovery surface at all rather than a quietly unvalidated one.
      *      Checking a flag on the transfer path instead would tax every transfer forever to catch a mistake
      *      that can only be made once, at deployment.
      */
@@ -257,6 +278,26 @@ abstract contract ERC20ExtensionCore is
         if (first != 0) revert ERC20IncompatibleBehaviors(first, second);
 
         $.isSealed = true;
+        // Every assembly is required to reach here, which makes it the one place guaranteed to run exactly
+        // once per token — so it is where the epoch starts. Starting at 1 rather than 0 is what lets
+        // `expectedConfigurationEpoch == 0` mean "not checking" instead of colliding with a real epoch.
+        $.configurationEpoch = 1;
+    }
+
+    /**
+     * @dev Called by every configuration change that could alter what a transfer does. Deliberately not
+     *      wired into `_authorizeExtensionConfig` or `_emitExtensionConfigured`, which would have made it
+     *      automatic: metadata changes route through both of those and must *not* advance the epoch, since
+     *      bricking a treasury's pending checked transfer because the token updated its logo URI is exactly
+     *      the failure mode that makes callers stop using the epoch at all.
+     */
+    function _advanceConfigurationEpoch() internal {
+        ExtensionRegistryStorage storage $ = _getExtensionRegistryStorage();
+        // Checked arithmetic on purpose. Wrapping is unreachable in practice, but the value it would wrap
+        // to is `0`, which is the "do not check" sentinel — the one number this counter must never return.
+        uint64 next = $.configurationEpoch + 1;
+        $.configurationEpoch = next;
+        emit ConfigurationEpochAdvanced(next);
     }
 
     /// @dev Records that per-account extension state changed, for {accountState}.
@@ -272,7 +313,8 @@ abstract contract ERC20ExtensionCore is
     /**
      * @dev Every configuration entry point in every module routes through here, passing its own extension
      *      ID. An assembly implements this once and dispatches on the ID, which keeps per-extension
-     *      authorities possible without any module having to know what access-control scheme is in use.
+     *      authorities — Token-2022's model, where the fee authority and the freeze authority are different
+     *      keys — without any module having to know what access-control scheme is in use.
      *
      *      Left abstract on purpose: an assembly must state its authorisation policy rather than inherit a
      *      default that might be permissive.

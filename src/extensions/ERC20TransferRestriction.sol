@@ -29,8 +29,6 @@ import {ERC20ExtensionCore} from "./ERC20ExtensionCore.sol";
  *        account nobody may transact with is a mistake with no upside.
  *
  *      This module declares both `PAUSABLE` and `BLOCKLIST`, since it provides both.
- *
- * @custom:storage-location erc7201:berc.storage.TransferRestriction
  */
 abstract contract ERC20TransferRestriction is ERC20ExtensionCore, IERC20TransferRestriction {
     /// @notice The transfer is allowed.
@@ -131,7 +129,7 @@ abstract contract ERC20TransferRestriction is ERC20ExtensionCore, IERC20Transfer
     // Configuration
     // -----------------------------------------------------------------------------------------------
 
-    /// @notice Pauses or unpauses all transfers.
+    /// @notice Pauses or unpauses all transfers. Mint and burn are unaffected; see the table above.
     function setTransfersPaused(bool paused) external virtual {
         _authorizeExtensionConfig(ExtensionIds.TRANSFER_RESTRICTION);
 
@@ -139,14 +137,10 @@ abstract contract ERC20TransferRestriction is ERC20ExtensionCore, IERC20Transfer
 
         emit TransferPauseUpdated(paused);
         _emitExtensionConfigured(ExtensionIds.TRANSFER_RESTRICTION);
+        _advanceConfigurationEpoch();
     }
 
-    /**
-     * @notice Freezes or unfreezes one account.
-     * @dev No {ExtensionConfigured} for this one: it is per-account rather than token-level, and duplicating
-     *      each freeze into the generic event would double the log cost of every compliance action to carry
-     *      what {AccountFrozen} already carried.
-     */
+    /// @notice Freezes or unfreezes one account.
     function setFrozen(address account, bool frozen) external virtual {
         _authorizeExtensionConfig(ExtensionIds.TRANSFER_RESTRICTION);
 
@@ -154,5 +148,6 @@ abstract contract ERC20TransferRestriction is ERC20ExtensionCore, IERC20Transfer
         _touchAccountState(account);
 
         emit AccountFrozen(account, frozen);
+        _advanceConfigurationEpoch();
     }
 }

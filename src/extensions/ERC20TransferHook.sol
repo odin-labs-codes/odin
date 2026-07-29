@@ -199,5 +199,6 @@ abstract contract ERC20TransferHook is ERC20ExtensionCore, ReentrancyGuardTransi
 
         emit TransferHookUpdated(hook, gasLimit);
         _emitExtensionConfigured(ExtensionIds.TRANSFER_HOOK);
+        _advanceConfigurationEpoch();
     }
 }

@@ -14,7 +14,9 @@ import {ERC20ExtensionCore} from "./ERC20ExtensionCore.sol";
  *
  * @dev The fee itself is the easy part. What makes fee-on-transfer tokens unintegratable is that a caller
  *      cannot answer "how much will actually arrive?" without trying it, so every protocol either wraps the
- *      call in balance snapshots or refuses the token. This module answers the question directly.
+ *      call in balance snapshots or refuses the token. This module answers the question directly, and the
+ *      test suite pins the answer: for any amount, `computeFee` equals the difference between what leaves
+ *      the sender and what reaches the recipient, in the same transaction.
  *
  *      ## Rounding and direction
  *
@@ -32,11 +34,8 @@ import {ERC20ExtensionCore} from "./ERC20ExtensionCore.sol";
  *
  *      {maximumFee} is authority-mutable, which means an integrator caching it must also watch
  *      `FeeConfigUpdated`. {MAX_FEE_BASIS_POINTS} is not: it is a compile-time constant, so
- *      `fee <= amount * MAX_FEE_BASIS_POINTS / 10_000`
- *      holds for the lifetime of the deployment no matter what the authority does. A fee with no ceiling at
- *      all is indistinguishable from theft on a delay.
- *
- * @custom:storage-location erc7201:berc.storage.TransferFee
+ *      `fee <= amount * MAX_FEE_BASIS_POINTS / 10_000` holds for the lifetime of the deployment no matter
+ *      what the authority does. A fee with no ceiling at all is indistinguishable from theft on a delay.
  */
 abstract contract ERC20TransferFee is ERC20ExtensionCore, IERC20TransferFee {
     /// @notice Basis-point denominator. 10_000 basis points is 100%.
@@ -88,21 +87,21 @@ abstract contract ERC20TransferFee is ERC20ExtensionCore, IERC20TransferFee {
     }
 
     /// @inheritdoc IERC20TransferFee
-    function isFeeExempt(address account) public view virtual returns (bool) {
-        // The vault is exempt by construction: charging a fee on the vault's own withdrawals would make the
-        // fee recursive and would let it accumulate balance it can never fully move.
-        TransferFeeStorage storage $ = _getTransferFeeStorage();
-        return $.feeExempt[account] || (account != address(0) && account == $.feeVault);
-    }
-
-    /// @inheritdoc IERC20TransferFee
     function maximumFee() public view virtual returns (uint256) {
+        TransferFeeStorage storage $ = _getTransferFeeStorage();
         // Zero while the rate is zero. Clamping further — to the largest fee the rate could actually
         // produce — was considered and rejected: the only caps it would lower are ones near
         // `type(uint256).max`, so it would cost a `mulDiv` on every call to replace one astronomical
         // number with another, while leaving the bound just as loose for the caps that occur in practice.
-        TransferFeeStorage storage $ = _getTransferFeeStorage();
         return $.basisPoints == 0 ? 0 : $.maximumFee;
+    }
+
+    /// @inheritdoc IERC20TransferFee
+    function isFeeExempt(address account) public view virtual returns (bool) {
+        TransferFeeStorage storage $ = _getTransferFeeStorage();
+        // The vault is exempt by construction: charging a fee on the vault's own withdrawals would make the
+        // fee recursive and would let it accumulate balance it can never fully move.
+        return $.feeExempt[account] || (account != address(0) && account == $.feeVault);
     }
 
     /// @inheritdoc IERC20TransferFee
@@ -146,9 +145,7 @@ abstract contract ERC20TransferFee is ERC20ExtensionCore, IERC20TransferFee {
 
     /// @inheritdoc IERC20TransferFee
     function transferExactOut(address to, uint256 amountOut) public virtual returns (uint256 amountIn) {
-        address owner = _msgSender();
-        amountIn = _amountInForExactOut(owner, to, amountOut);
-        _transfer(owner, to, amountIn);
+        return transferExactOutChecked(to, amountOut, type(uint256).max, 0);
     }
 
     /// @inheritdoc IERC20TransferFee
@@ -157,7 +154,38 @@ abstract contract ERC20TransferFee is ERC20ExtensionCore, IERC20TransferFee {
         virtual
         returns (uint256 amountIn)
     {
+        return transferFromExactOutChecked(from, to, amountOut, type(uint256).max, 0);
+    }
+
+    /// @inheritdoc IERC20TransferFee
+    function transferExactOutChecked(
+        address to,
+        uint256 amountOut,
+        uint256 maxAmountIn,
+        uint64 expectedConfigurationEpoch
+    ) public virtual returns (uint256 amountIn) {
+        _requireConfigurationEpoch(expectedConfigurationEpoch);
+
+        address owner = _msgSender();
+        amountIn = _amountInForExactOut(owner, to, amountOut);
+        if (amountIn > maxAmountIn) revert ERC20ExactOutInputTooHigh(amountIn, maxAmountIn);
+
+        _transfer(owner, to, amountIn);
+    }
+
+    /// @inheritdoc IERC20TransferFee
+    function transferFromExactOutChecked(
+        address from,
+        address to,
+        uint256 amountOut,
+        uint256 maxAmountIn,
+        uint64 expectedConfigurationEpoch
+    ) public virtual returns (uint256 amountIn) {
+        _requireConfigurationEpoch(expectedConfigurationEpoch);
+
         amountIn = _amountInForExactOut(from, to, amountOut);
+        if (amountIn > maxAmountIn) revert ERC20ExactOutInputTooHigh(amountIn, maxAmountIn);
+
         // The allowance covers the gross amount, because the gross amount is what leaves `from`.
         _spendAllowance(from, _msgSender(), amountIn);
         _transfer(from, to, amountIn);
@@ -186,8 +214,10 @@ abstract contract ERC20TransferFee is ERC20ExtensionCore, IERC20TransferFee {
         returns (uint256)
     {
         // The address-level rejections the matching transfer would make, in the same order, so a caller
-        // simulating against this view is not told an impossible transfer will work. A sender who is also
-        // the recipient loses the fee and gains nothing, which no return value describes honestly.
+        // simulating against this view is not told an impossible transfer will work. It is not a dry run:
+        // a pause, a freeze, a hook or an insufficient balance can still stop the transfer afterwards, and
+        // none of them are visible from here. A sender who is also the recipient loses the fee and gains
+        // nothing, which no return value describes honestly.
         if (from == to) revert ERC20ExactOutToSelf(from);
         if (from == address(0)) revert ERC20InvalidSender(address(0));
         if (to == address(0)) revert ERC20InvalidReceiver(address(0));
@@ -210,6 +240,12 @@ abstract contract ERC20TransferFee is ERC20ExtensionCore, IERC20TransferFee {
         // The order matters and cannot be inverted. Testing the capped candidate first and returning it as
         // soon as its fee reaches the cap loses minimality: with a 10% rate and a cap of 5, both 49 and 50
         // deliver exactly 45, and `amountOut + cap` is the larger of the two.
+        //
+        // The limit rounds **up**, and the comparison is strict. Rounding down excluded `floor(MAX*k/D)`,
+        // which is a perfectly representable input — with a 10% rate and no effective cap, an `amountOut`
+        // one above it inverts to exactly `type(uint256).max` and was being sent down the capped path to
+        // overflow instead. Rounding up admits it, and cannot admit anything whose `+ 1` overflows: an `a`
+        // below `ceil(MAX*k/D)` has `a*D/k < MAX`, so the `mulDiv` lands at `MAX - 1` at the highest.
         uint256 uncappedLimit = Math.mulDiv(type(uint256).max, k, FEE_BASIS_POINT_DENOMINATOR, Math.Rounding.Ceil);
         if (amountOut - 1 < uncappedLimit) {
             uint256 uncapped = Math.mulDiv(amountOut - 1, FEE_BASIS_POINT_DENOMINATOR, k) + 1;
@@ -218,7 +254,18 @@ abstract contract ERC20TransferFee is ERC20ExtensionCore, IERC20TransferFee {
 
         // Checked before the addition so the caller gets the declared error rather than a bare panic.
         if (cap > type(uint256).max - amountOut) revert ERC20ExactOutUnrepresentable(amountOut);
-        return amountOut + cap;
+        uint256 capped = amountOut + cap;
+
+        // Belt and braces, and provably so. Reaching here without the cap binding would mean the answer was
+        // the uncapped candidate after all, which cannot happen: writing `b` for the rate, `k = D - b` and
+        // `M` for `type(uint256).max`, arriving here needs `amountOut > M*k/D`, surviving the addition needs
+        // `cap < M*b/D`, and a non-binding cap needs `cap > amountOut*b/k`. The first and third give
+        // `cap > M*b/D`, which contradicts the second. The check stays because that argument depends on the
+        // exact comparison above it, and an edit there should fail loudly rather than return a wrong number.
+        if (Math.mulDiv(capped, basisPoints, FEE_BASIS_POINT_DENOMINATOR) < cap) {
+            revert ERC20ExactOutUnrepresentable(amountOut);
+        }
+        return capped;
     }
 
     // -----------------------------------------------------------------------------------------------
@@ -253,9 +300,9 @@ abstract contract ERC20TransferFee is ERC20ExtensionCore, IERC20TransferFee {
             revert ERC20FeeBasisPointsTooHigh(basisPoints, MAX_FEE_BASIS_POINTS);
         }
 
+        TransferFeeStorage storage $ = _getTransferFeeStorage();
         // A non-zero rate with no vault would send fees to address(0), which burns them and makes total
         // supply drift downwards on every transfer — a rebase nobody declared.
-        TransferFeeStorage storage $ = _getTransferFeeStorage();
         if (basisPoints > 0 && $.feeVault == address(0)) revert ERC20FeeVaultNotSet();
 
         $.basisPoints = basisPoints;
@@ -263,6 +310,7 @@ abstract contract ERC20TransferFee is ERC20ExtensionCore, IERC20TransferFee {
 
         emit FeeConfigUpdated(basisPoints, newMaximumFee);
         _emitExtensionConfigured(ExtensionIds.TRANSFER_FEE);
+        _advanceConfigurationEpoch();
     }
 
     /// @notice Sets the address that collects fees. Cannot be the zero address.
@@ -283,6 +331,7 @@ abstract contract ERC20TransferFee is ERC20ExtensionCore, IERC20TransferFee {
 
         emit FeeVaultUpdated(newFeeVault);
         _emitExtensionConfigured(ExtensionIds.TRANSFER_FEE);
+        _advanceConfigurationEpoch();
     }
 
     /// @notice Exempts an account from the fee, or revokes the exemption. Typically used for AMM pools.
@@ -293,5 +342,7 @@ abstract contract ERC20TransferFee is ERC20ExtensionCore, IERC20TransferFee {
         _touchAccountState(account);
 
         emit FeeExemptionUpdated(account, exempt);
+        // Per-account, but it changes what a transfer costs just as directly as the rate does.
+        _advanceConfigurationEpoch();
     }
 }
