@@ -220,8 +220,16 @@ abstract contract ExtendedTokenBase is
         return super._accountFeeExempt(account);
     }
 
-    /// @inheritdoc ERC20ExtensionCore
+    /**
+     * @inheritdoc ERC20ExtensionCore
+     * @dev The installed check comes first and is not redundant. An assembly that installs every module it
+     *      inherits can never fail it, but a shared runtime installs a subset per token while still carrying
+     *      every module's setters — without this, the fee authority of a token that has no fee extension
+     *      could configure one, and `extensions()` would keep reporting that the token has none.
+     */
     function _authorizeExtensionConfig(bytes4 extensionId) internal view virtual override {
+        if (!hasExtension(extensionId)) revert ERC20ExtensionNotEnabled(extensionId);
+
         if (extensionId == ExtensionIds.ONCHAIN_METADATA) {
             _checkRole(METADATA_ROLE);
         } else if (extensionId == ExtensionIds.TRANSFER_FEE) {
