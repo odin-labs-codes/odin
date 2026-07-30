@@ -23,7 +23,8 @@ import {ExtensionIds} from "../libraries/ExtensionIds.sol";
  *      A token on a shared runtime cannot add code, so the runtime has to carry every extension any token
  *      might want, and each token turns on a subset. Modules that read configuration are naturally inert
  *      when unconfigured — an unregistered fee module has a zero rate, an unregistered restriction module
- *      blocks nothing.
+ *      blocks nothing. The one exception is `ERC20NonTransferable`, whose check is unconditional by
+ *      design, so it is gated on registration through `_nonTransferableActive`.
  */
 contract BERCRuntimeV1 is ExtendedTokenBase, ERC20NonTransferable {
     /// @notice Human-readable identity. The address of this contract is the identity that actually matters.
@@ -66,6 +67,11 @@ contract BERCRuntimeV1 is ExtendedTokenBase, ERC20NonTransferable {
             return true;
         }
         return super._initializeExtension(extensionId);
+    }
+
+    /// @inheritdoc ERC20NonTransferable
+    function _nonTransferableActive() internal view virtual override returns (bool) {
+        return hasExtension(ExtensionIds.NON_TRANSFERABLE);
     }
 
     // -----------------------------------------------------------------------------------------------

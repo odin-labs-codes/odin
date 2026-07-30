@@ -26,9 +26,22 @@ abstract contract ERC20NonTransferable is ERC20ExtensionCore, IERC20NonTransfera
 
     /// @inheritdoc ERC20ExtensionCore
     function _checkTransferAllowed(address from, address to, uint256 value) internal view virtual override {
-        if (from != address(0) && to != address(0)) {
+        if (_nonTransferableActive() && from != address(0) && to != address(0)) {
             revert ERC20TransfersNotSupported();
         }
         super._checkTransferAllowed(from, to, value);
+    }
+
+    /**
+     * @dev Whether this module's check applies. Always true for an assembly that inherits the module
+     *      because it wants the behaviour, which is every assembly built by inheritance — Solidity resolves
+     *      the call statically there, so the gate costs such a token nothing.
+     *
+     *      It exists for the opposite construction: a shared runtime inherits every module and turns each
+     *      one on per token, and a module that reverts unconditionally would brick every token that did not
+     *      ask for it. {BERCRuntimeV1} overrides this with its own registration state.
+     */
+    function _nonTransferableActive() internal view virtual returns (bool) {
+        return true;
     }
 }
