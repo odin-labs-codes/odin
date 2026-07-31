@@ -10,9 +10,18 @@ import {BERCRuntimeV1} from "./BERCRuntimeV1.sol";
  * @title BERCFactoryV1
  * @notice Deploys canonical BERC tokens as clones of one runtime, and keeps a list of the ones it made.
  *
- * @dev Anyone may clone {RUNTIME} without coming through here, and such a token is exactly as canonical as
- *      one this factory made — it runs the same code, which is the entire claim. The index below is for
- *      enumeration and UI, not for deciding whether to trust a token.
+ * @dev ## This contract is a convenience, not the trust anchor
+ *
+ *      It would be natural to make {isDeployedToken} the question integrators ask, and it would be a
+ *      mistake. A registry is only as honest as its write path: give it an owner and the owner can forge
+ *      entries, give it none and it can never learn about a second runtime. Worse, it makes verification a
+ *      `staticcall` to an address the integrator also has to have obtained from somewhere trustworthy.
+ *
+ *      {BERCVerification} answers the same question from the token's own bytecode, with no call and nothing
+ *      to trust, and that is the check integrators should run. Anyone may clone {RUNTIME} without coming
+ *      through here, and such a token is exactly as canonical as one this factory made — it runs the same
+ *      code, which is the entire claim. This factory exists to make deployment a single correct
+ *      transaction, and to let a UI enumerate tokens. Nothing here confers legitimacy.
  *
  *      ## What it does that a bare clone would get wrong
  *
@@ -23,7 +32,7 @@ import {BERCRuntimeV1} from "./BERCRuntimeV1.sol";
  *      All of that is one call here.
  */
 contract BERCFactoryV1 {
-    /// @notice The runtime every token from this factory delegates to.
+    /// @notice The runtime every token from this factory delegates to. Pass this to {BERCVerification}.
     address public immutable RUNTIME;
 
     /**
@@ -100,7 +109,8 @@ contract BERCFactoryV1 {
 
     /**
      * @notice Whether this factory deployed `token`.
-     * @dev For enumeration and UI, not for deciding whether to trust a token.
+     * @dev For enumeration and UI, not for deciding whether to trust a token. A `false` here says nothing
+     *      about the token's code — use {BERCVerification-isClonedFrom} against {RUNTIME} for that.
      */
     function isDeployedToken(address token) external view returns (bool) {
         return _isDeployedToken[token];
