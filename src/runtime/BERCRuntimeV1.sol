@@ -15,6 +15,16 @@ import {ExtensionIds} from "../libraries/ExtensionIds.sol";
  *      it audits the program once, and every mint inherits that audit. This contract is the closest an EVM
  *      chain gets: deployed once, never upgraded, and pointed at by every token built on it.
  *
+ *      ## Why a clone rather than a proxy the token controls
+ *
+ *      `ExtendedTokenUpgradeable` declares `UPGRADEABLE` and means it: its `UPGRADER_ROLE` can point the
+ *      proxy at any implementation, including one with a different extension set, and nothing on chain
+ *      prevents it. That is an honest declaration of a real power, and it is also the reason a token that
+ *      wants to be *believed* cannot be built that way. An EIP-1167 clone has no admin slot and no upgrade
+ *      path; its 45 bytes name this contract and can never name another. The extension set an integrator
+ *      reads today is the extension set that will still be there in a year, and that is a fact about the
+ *      bytecode rather than a promise from the issuer.
+ *
  *      New capability arrives as a new runtime and new tokens, never as a change to these. Existing tokens
  *      keeping their behaviour forever is the product, not a limitation of it.
  *
@@ -25,6 +35,19 @@ import {ExtensionIds} from "../libraries/ExtensionIds.sol";
  *      when unconfigured — an unregistered fee module has a zero rate, an unregistered restriction module
  *      blocks nothing. The one exception is `ERC20NonTransferable`, whose check is unconditional by
  *      design, so it is gated on registration through `_nonTransferableActive`.
+ *
+ *      Because the setters for every module exist on every token, `_authorizeExtensionConfig` rejects
+ *      configuration of extensions this token did not install. Without that, a token reporting no fee
+ *      extension could still be given one.
+ *
+ *      ## Initialisation is a race only if you make it one
+ *
+ *      Cloning and initialising must happen in the same transaction. {BERCFactoryV1} does both, and anyone
+ *      cloning this runtime directly must do the same, or a front-runner can initialise the clone with
+ *      themselves as admin. A clone that has not been initialised is inert rather than dangerous: nothing
+ *      has sealed its extension set, so `extensions()`, `behaviorFlags()` and `extensionData()` all revert.
+ *      Integrators must read that revert as "unknown", never as "no extensions" — the distinction is the
+ *      whole point of the discovery layer.
  */
 contract BERCRuntimeV1 is ExtendedTokenBase, ERC20NonTransferable {
     /// @notice Human-readable identity. The address of this contract is the identity that actually matters.
