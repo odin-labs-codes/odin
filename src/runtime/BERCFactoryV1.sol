@@ -74,6 +74,20 @@ contract BERCFactoryV1 {
         token = _configure(Clones.clone(RUNTIME), params);
     }
 
+    /**
+     * @notice Deploys a token at an address derivable in advance from `msg.sender` and `salt`.
+     * @dev The caller's address is mixed into the salt, so one deployer cannot occupy another's chosen
+     *      address. Use {predictDeterministicAddress} with the same pair to compute the result first.
+     */
+    function deployDeterministic(TokenParams calldata params, bytes32 salt) external returns (address token) {
+        token = _configure(Clones.cloneDeterministic(RUNTIME, _salt(msg.sender, salt)), params);
+    }
+
+    /// @notice The address {deployDeterministic} will produce for `deployer` and `salt`.
+    function predictDeterministicAddress(address deployer, bytes32 salt) external view returns (address) {
+        return Clones.predictDeterministicAddress(RUNTIME, _salt(deployer, salt), address(this));
+    }
+
     /// @notice How many tokens this factory has deployed.
     function tokenCount() external view returns (uint256) {
         return _tokens.length;
@@ -154,6 +168,10 @@ contract BERCFactoryV1 {
 
     function _orAdmin(address authority, address admin) private pure returns (address) {
         return authority == address(0) ? admin : authority;
+    }
+
+    function _salt(address deployer, bytes32 salt) private pure returns (bytes32) {
+        return keccak256(abi.encode(deployer, salt));
     }
 
     function _requests(bytes4[] calldata extensionIds, bytes4 wanted) private pure returns (bool) {
