@@ -205,6 +205,24 @@ contract FactoryTest is Test {
         factory.deploy(params);
     }
 
+    function test_RevertWhen_TheAdminIsZero() public {
+        BERCFactoryV1.TokenParams memory params = _params();
+        params.admin = address(0);
+
+        // Every role would be handed to an address nobody controls, and the deployment would look fine.
+        vm.expectRevert(abi.encodeWithSelector(BERCFactoryV1.BERCInvalidAdmin.selector, address(0)));
+        factory.deploy(params);
+    }
+
+    function test_RevertWhen_TheAdminIsTheFactoryItself() public {
+        BERCFactoryV1.TokenParams memory params = _params();
+        params.admin = address(factory);
+
+        // The factory revokes its own roles at the end, so this would strand the token with no authority.
+        vm.expectRevert(abi.encodeWithSelector(BERCFactoryV1.BERCInvalidAdmin.selector, address(factory)));
+        factory.deploy(params);
+    }
+
     function test_RevertWhen_TheRuntimeHasNoCode() public {
         vm.expectRevert(abi.encodeWithSelector(BERCFactoryV1.BERCInvalidRuntime.selector, alice));
         new BERCFactoryV1(alice);

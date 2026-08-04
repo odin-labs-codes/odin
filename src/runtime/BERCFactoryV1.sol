@@ -75,6 +75,9 @@ contract BERCFactoryV1 {
     /// @notice The runtime address passed to the constructor has no code.
     error BERCInvalidRuntime(address runtime);
 
+    /// @notice The admin cannot be the zero address or this factory, which is about to give up its roles.
+    error BERCInvalidAdmin(address admin);
+
     /// @notice Fee parameters were supplied without the transfer-fee extension.
     error BERCFeeConfigWithoutFeeExtension();
 
@@ -125,6 +128,8 @@ contract BERCFactoryV1 {
     }
 
     function _configure(address token, TokenParams calldata params) private returns (address) {
+        if (params.admin == address(0) || params.admin == address(this)) revert BERCInvalidAdmin(params.admin);
+
         bool wantsFee = _requests(params.extensionIds, ExtensionIds.TRANSFER_FEE);
         if (!wantsFee) {
             if (params.feeVault != address(0) || params.feeBasisPoints != 0 || params.maximumFee != 0) {
