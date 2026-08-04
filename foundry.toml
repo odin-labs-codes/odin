@@ -8,3 +8,13 @@ solc_version = "0.8.28"
 evm_version = "cancun"          # EIP-1153 transient storage: the hook reentrancy guard uses TSTORE/TLOAD
 optimizer = true
 optimizer_runs = 200
+
+[fmt]
+# Generated, and checked byte-for-byte against a fresh run of the generator. Formatting it here would mean
+# the generator had to reproduce the formatter's output exactly, which is a race nobody wins.
+ignore = ["test/mocks/Combinations.sol"]
+line_length = 118
+tab_width = 4
+bracket_spacing = false
+int_types = "long"
+sort_imports = true
