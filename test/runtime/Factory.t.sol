@@ -155,6 +155,31 @@ contract FactoryTest is Test {
         assertEq(BERCRuntimeV1(token).extensions()[0], params.extensionIds[0]);
     }
 
+    function test_RevertWhen_FeeParamsAreGivenWithoutTheFeeExtension() public {
+        BERCFactoryV1.TokenParams memory params = _params();
+        params.feeBasisPoints = 100;
+
+        vm.expectRevert(BERCFactoryV1.BERCFeeConfigWithoutFeeExtension.selector);
+        factory.deploy(params);
+    }
+
+    function test_RevertWhen_AVaultIsGivenWithoutTheFeeExtension() public {
+        BERCFactoryV1.TokenParams memory params = _params();
+        params.feeVault = vault;
+
+        vm.expectRevert(BERCFactoryV1.BERCFeeConfigWithoutFeeExtension.selector);
+        factory.deploy(params);
+    }
+
+    function test_RevertWhen_TheFeeExtensionComesWithNoVault() public {
+        BERCFactoryV1.TokenParams memory params = _feeParams();
+        params.feeVault = address(0);
+
+        // A zero rate would otherwise sail through and leave a fee token that cannot collect.
+        vm.expectRevert(BERCFactoryV1.BERCFeeVaultRequired.selector);
+        factory.deploy(params);
+    }
+
     function test_RevertWhen_TheRuntimeHasNoCode() public {
         vm.expectRevert(abi.encodeWithSelector(BERCFactoryV1.BERCInvalidRuntime.selector, alice));
         new BERCFactoryV1(alice);

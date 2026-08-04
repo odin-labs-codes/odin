@@ -58,7 +58,8 @@ contract BERCFactoryV1 {
         /// @dev From {ExtensionIds}. May be empty. Duplicates, unknown ids and contradictory combinations
         ///      are all rejected by the runtime's initialiser.
         bytes4[] extensionIds;
-        /// @dev The three fields below are meaningful only with `TRANSFER_FEE` installed.
+        /// @dev The three fields below are meaningful only with `TRANSFER_FEE` installed, and must be left
+        ///      at zero otherwise rather than silently ignored.
         address feeVault;
         uint16 feeBasisPoints;
         uint256 maximumFee;
@@ -72,6 +73,12 @@ contract BERCFactoryV1 {
 
     /// @notice The runtime address passed to the constructor has no code.
     error BERCInvalidRuntime(address runtime);
+
+    /// @notice Fee parameters were supplied without the transfer-fee extension.
+    error BERCFeeConfigWithoutFeeExtension();
+
+    /// @notice The transfer-fee extension was requested without a vault to collect into.
+    error BERCFeeVaultRequired();
 
     constructor(address runtime) {
         if (runtime.code.length == 0) revert BERCInvalidRuntime(runtime);
@@ -118,6 +125,15 @@ contract BERCFactoryV1 {
 
     function _configure(address token, TokenParams calldata params) private returns (address) {
         bool wantsFee = _requests(params.extensionIds, ExtensionIds.TRANSFER_FEE);
+        if (!wantsFee) {
+            if (params.feeVault != address(0) || params.feeBasisPoints != 0 || params.maximumFee != 0) {
+                revert BERCFeeConfigWithoutFeeExtension();
+            }
+        } else if (params.feeVault == address(0)) {
+            // The runtime would reject a non-zero rate without a vault, but a zero rate would sail through
+            // and leave a fee token that cannot collect until someone notices.
+            revert BERCFeeVaultRequired();
+        }
 
         BERCRuntimeV1 deployed = BERCRuntimeV1(token);
         deployed.initialize(params.name, params.symbol, address(this), params.extensionIds);
