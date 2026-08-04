@@ -32,6 +32,13 @@ import {ExtensionIds} from "./libraries/ExtensionIds.sol";
  *      that every module's setters route into. The modules themselves know nothing about roles, so a
  *      different assembly can swap in `Ownable`, a timelock, or a governor without touching them.
  *
+ *      **`SEIZE_ROLE` takes balances, and separating it from `MINT_ROLE` does not make that safe.** The
+ *      two are split because they are genuinely different powers and `behaviorFlags()` declares them
+ *      separately — a vocabulary finer-grained than the authorities behind it is a vocabulary that
+ *      misleads. What the split buys is blast radius: a compromised minting key cannot empty accounts,
+ *      and a compliance key that settles frozen balances cannot dilute holders. What it does not buy is
+ *      any bound on the admin, which can still grant itself both.
+ *
  *      The initialiser grants every role to `admin` so that a deployment is usable immediately. Splitting
  *      them across separate keys is the expected next step.
  */
@@ -42,8 +49,17 @@ abstract contract ExtendedTokenBase is
     ERC20TransferHook,
     AccessControlUpgradeable
 {
-    /// @notice Creates and destroys supply.
-    bytes32 public constant SUPPLY_ROLE = keccak256("berc.role.SUPPLY");
+    /// @notice Creates supply. The power `BehaviorFlags.MINTABLE` declares.
+    bytes32 public constant MINT_ROLE = keccak256("berc.role.MINT");
+
+    /**
+     * @notice Destroys any account's balance. The power `BehaviorFlags.SEIZABLE` declares.
+     * @dev Separate from {MINT_ROLE} because they are separate powers and the flag word says so. It also
+     *      covers burning a balance the holder controls itself: this assembly has no permissionless
+     *      self-burn, so a treasury that wants to retire its own tokens holds this role — which is the same
+     *      authority it would have needed before the split, not a new one.
+     */
+    bytes32 public constant SEIZE_ROLE = keccak256("berc.role.SEIZE");
 
     /// @notice Writes the on-chain metadata store and the token URI.
     bytes32 public constant METADATA_ROLE = keccak256("berc.role.METADATA");
@@ -96,7 +112,8 @@ abstract contract ExtendedTokenBase is
         _declareBehavior(BehaviorFlags.MINTABLE | BehaviorFlags.SEIZABLE);
 
         _grantRole(DEFAULT_ADMIN_ROLE, admin);
-        _grantRole(SUPPLY_ROLE, admin);
+        _grantRole(MINT_ROLE, admin);
+        _grantRole(SEIZE_ROLE, admin);
         _grantRole(METADATA_ROLE, admin);
         _grantRole(FEE_CONFIG_ROLE, admin);
         _grantRole(RESTRICTION_ROLE, admin);
@@ -133,7 +150,7 @@ abstract contract ExtendedTokenBase is
     }
 
     /// @notice Creates `value` new tokens for `to`.
-    function mint(address to, uint256 value) external virtual onlyRole(SUPPLY_ROLE) {
+    function mint(address to, uint256 value) external virtual onlyRole(MINT_ROLE) {
         _mint(to, value);
     }
 
@@ -141,9 +158,11 @@ abstract contract ExtendedTokenBase is
      * @notice Destroys `value` tokens held by `from`.
      * @dev Deliberately not restricted to the caller's own balance. An issuer that can freeze an account
      *      but not settle its balance has a freeze that cannot be resolved; see the table on
-     *      `ERC20TransferRestriction` for why burning is the one flow a freeze does not block.
+     *      `ERC20TransferRestriction` for why burning is the one flow a freeze does not block. That is
+     *      what makes this {SEIZE_ROLE} and not {MINT_ROLE}: a key that can only add supply cannot reach
+     *      anyone's balance.
      */
-    function burn(address from, uint256 value) external virtual onlyRole(SUPPLY_ROLE) {
+    function burn(address from, uint256 value) external virtual onlyRole(SEIZE_ROLE) {
         _burn(from, value);
     }
 

@@ -102,7 +102,8 @@ contract FactoryTest is Test {
         BERCRuntimeV1 token = BERCRuntimeV1(factory.deploy(_params()));
 
         assertTrue(token.hasRole(token.DEFAULT_ADMIN_ROLE(), admin));
-        assertTrue(token.hasRole(token.SUPPLY_ROLE(), admin));
+        assertTrue(token.hasRole(token.MINT_ROLE(), admin));
+        assertTrue(token.hasRole(token.SEIZE_ROLE(), admin));
         assertTrue(token.hasRole(token.METADATA_ROLE(), admin));
         assertTrue(token.hasRole(token.RESTRICTION_ROLE(), admin));
     }
@@ -112,7 +113,8 @@ contract FactoryTest is Test {
 
         assertFalse(token.hasRole(token.DEFAULT_ADMIN_ROLE(), address(factory)));
         assertFalse(token.hasRole(token.FEE_CONFIG_ROLE(), address(factory)));
-        assertFalse(token.hasRole(token.SUPPLY_ROLE(), address(factory)));
+        assertFalse(token.hasRole(token.MINT_ROLE(), address(factory)));
+        assertFalse(token.hasRole(token.SEIZE_ROLE(), address(factory)));
     }
 
     function test_TheNewAuthoritiesCanActImmediately() public {
@@ -125,6 +127,29 @@ contract FactoryTest is Test {
         token.setFeeConfig(250, 1e18);
 
         assertEq(token.feeBasisPoints(), 250);
+    }
+
+    function test_MintingAndSeizingCanBeHeldBySeparateKeys() public {
+        address minter = makeAddr("minter");
+        address seizer = makeAddr("seizer");
+
+        BERCFactoryV1.TokenParams memory params = _params();
+        params.authorities.mint = minter;
+        params.authorities.seize = seizer;
+
+        BERCRuntimeV1 token = BERCRuntimeV1(factory.deploy(params));
+
+        vm.prank(minter);
+        token.mint(alice, 10e18);
+
+        // A compromised minting key cannot empty accounts.
+        vm.expectRevert();
+        vm.prank(minter);
+        token.burn(alice, 1e18);
+
+        vm.prank(seizer);
+        token.burn(alice, 1e18);
+        assertEq(token.balanceOf(alice), 9e18);
     }
 
     function test_ADeterministicDeployLandsWhereItWasPredicted() public {

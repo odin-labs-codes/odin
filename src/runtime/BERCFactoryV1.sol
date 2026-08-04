@@ -43,7 +43,8 @@ contract BERCFactoryV1 {
     struct Authorities {
         address fee;
         address restriction;
-        address supply;
+        address mint;
+        address seize;
         address metadata;
         address hook;
     }
@@ -167,16 +168,18 @@ contract BERCFactoryV1 {
      */
     function _handOverRoles(BERCRuntimeV1 token, TokenParams calldata params) private {
         address admin = params.admin;
-        bytes32[6] memory roles = [
-            token.SUPPLY_ROLE(),
+        bytes32[7] memory roles = [
+            token.MINT_ROLE(),
+            token.SEIZE_ROLE(),
             token.METADATA_ROLE(),
             token.FEE_CONFIG_ROLE(),
             token.RESTRICTION_ROLE(),
             token.HOOK_CONFIG_ROLE(),
             token.DEFAULT_ADMIN_ROLE()
         ];
-        address[6] memory holders = [
-            _orAdmin(params.authorities.supply, admin),
+        address[7] memory holders = [
+            _orAdmin(params.authorities.mint, admin),
+            _orAdmin(params.authorities.seize, admin),
             _orAdmin(params.authorities.metadata, admin),
             _orAdmin(params.authorities.fee, admin),
             _orAdmin(params.authorities.restriction, admin),
