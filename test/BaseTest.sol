@@ -5,8 +5,8 @@ import {Test} from "forge-std/Test.sol";
 
 import {ExtendedToken} from "../src/ExtendedToken.sol";
 
-/// @dev Shared fixture: a fully assembled token, a funded cast of actors, and helpers for the things almost
-///      every test needs to change.
+/// @dev Shared fixture: a fully assembled token, a funded cast of actors, and helpers for the two things
+///      almost every test needs to change — the fee configuration and who holds which role.
 abstract contract BaseTest is Test {
     ExtendedToken internal token;
 
@@ -33,11 +33,6 @@ abstract contract BaseTest is Test {
         token.setFeeConfig(basisPoints, maximumFee);
     }
 
-    function _setHook(address hook, uint32 gasLimit) internal {
-        vm.prank(admin);
-        token.setTransferHook(hook, gasLimit);
-    }
-
     function _setFrozen(address account, bool frozen) internal {
         vm.prank(admin);
         token.setFrozen(account, frozen);
@@ -46,5 +41,10 @@ abstract contract BaseTest is Test {
     function _setPaused(bool paused) internal {
         vm.prank(admin);
         token.setTransfersPaused(paused);
+    }
+
+    function _setHook(address hook, uint32 gasLimit) internal {
+        vm.prank(admin);
+        token.setTransferHook(hook, gasLimit);
     }
 }
