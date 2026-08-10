@@ -18,3 +18,14 @@ tab_width = 4
 bracket_spacing = false
 int_types = "long"
 sort_imports = true
+
+[profile.default.fuzz]
+runs = 512
+max_test_rejects = 200000
+
+[profile.default.invariant]
+runs = 128
+depth = 64
+fail_on_revert = false
+call_override = false
+shrink_run_limit = 5000
