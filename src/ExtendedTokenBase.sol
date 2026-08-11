@@ -16,31 +16,44 @@ import {ExtensionIds} from "./libraries/ExtensionIds.sol";
  * @notice The shared assembly behind both reference tokens: four extension modules, one role per authority,
  *         and nothing else.
  *
- * @dev Extracted from `ExtendedToken` so that an immutable deployment and a proxied one can be two thin
- *      shells over one assembly. The alternative — two parallel trees — would mean the fee arithmetic and
- *      the transfer pipeline existed in two places, and the pipeline is the part of this codebase where a
- *      divergence would be least visible and most expensive.
+ * @dev ## What is assembled here
+ *
+ *      Metadata, transfer fee, transfer restriction and transfer hook. `ERC20NonTransferable` is absent by
+ *      necessity, not oversight: `NON_TRANSFERABLE` contradicts both `FEE_ON_TRANSFER` and `TRANSFER_HOOK`,
+ *      so an assembly containing all five would revert in its own constructor. The module is exercised by
+ *      the combination-matrix tests, which assemble it against every other subset.
  *
  *      The order the modules are listed in below does not affect behaviour — `ERC20ExtensionCore` owns the
  *      only `_update` and fixes the phase order there. This is a property worth relying on: a third party
  *      assembling their own token cannot get the ordering wrong by listing modules in the order that reads
  *      best.
  *
- *      ## One role per authority
+ *      ## One role per authority — and what that is not
  *
  *      Each extension has its own role, reached through the single {_authorizeExtensionConfig} dispatch
  *      that every module's setters route into. The modules themselves know nothing about roles, so a
  *      different assembly can swap in `Ownable`, a timelock, or a governor without touching them.
  *
- *      **`SEIZE_ROLE` takes balances, and separating it from `MINT_ROLE` does not make that safe.** The
- *      two are split because they are genuinely different powers and `behaviorFlags()` declares them
- *      separately — a vocabulary finer-grained than the authorities behind it is a vocabulary that
- *      misleads. What the split buys is blast radius: a compromised minting key cannot empty accounts,
- *      and a compliance key that settles frozen balances cannot dilute holders. What it does not buy is
- *      any bound on the admin, which can still grant itself both.
+ *      This resembles Token-2022's separate authorities and is **not** equivalent to them, which matters
+ *      enough to state plainly rather than let an integrator infer:
+ *
+ *      - **`DEFAULT_ADMIN_ROLE` can grant itself any of the others.** These are operational roles under a
+ *        replaceable admin, not independent authorities. Splitting the keys limits blast radius for an
+ *        operator mistake or a single compromised key; it does not bound what the token's owner can do.
+ *        Token-2022's authorities can be renounced individually and permanently, and nothing here does.
+ *      - **`SEIZE_ROLE` takes balances, and separating it from `MINT_ROLE` does not make that safe.** The
+ *        two are split because they are genuinely different powers and `behaviorFlags()` declares them
+ *        separately — a vocabulary finer-grained than the authorities behind it is a vocabulary that
+ *        misleads. What the split buys is blast radius: a compromised minting key cannot empty accounts,
+ *        and a compliance key that settles frozen balances cannot dilute holders. What it does not buy is
+ *        any bound on the admin, which can still grant itself both.
+ *      - **Role holders are not enumerable on chain.** `AccessControl` answers `hasRole(role, account)`
+ *        but cannot list holders, so an integrator auditing who holds what has to reconstruct it from
+ *        `RoleGranted` and `RoleRevoked` logs.
  *
  *      The initialiser grants every role to `admin` so that a deployment is usable immediately. Splitting
- *      them across separate keys is the expected next step.
+ *      them across separate keys is the expected next step and is what `script/Deploy.s.sol` demonstrates,
+ *      including the postcondition checks that prove the split actually landed.
  */
 abstract contract ExtendedTokenBase is
     ERC20OnchainMetadata,
@@ -123,7 +136,7 @@ abstract contract ExtendedTokenBase is
     /**
      * @dev Installs one extension by identifier, returning false if it is not one of this assembly's.
      *      An assembly that inherits further modules overrides this, handles its own identifiers, and
-     *      delegates the rest upward.
+     *      delegates the rest upward — which is how {BERCRuntimeV1} adds a fifth without restating these.
      */
     function _initializeExtension(bytes4 extensionId) internal virtual onlyInitializing returns (bool) {
         if (extensionId == ExtensionIds.ONCHAIN_METADATA) {
