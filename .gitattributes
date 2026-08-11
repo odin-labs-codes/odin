@@ -1,0 +1,9 @@
+# The working copy is Windows and the CI runner is Linux. Without this, `forge fmt --check` can pass
+# locally and fail on a fresh clone purely over line endings.
+* text=auto eol=lf
+
+*.sol  text eol=lf
+*.md   text eol=lf
+*.toml text eol=lf
+*.mjs  text eol=lf
+*.yml  text eol=lf
