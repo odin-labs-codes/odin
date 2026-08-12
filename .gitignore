@@ -1,5 +1,8 @@
 out/
 cache/
 broadcast/
+docs/build/
+lcov.info
+coverage/
 .env
 node_modules/

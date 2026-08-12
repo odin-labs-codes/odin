@@ -5,6 +5,7 @@ permissions: {}
 on:
   push:
   pull_request:
+  workflow_dispatch:
 
 jobs:
   check:
@@ -13,13 +14,22 @@ jobs:
     permissions:
       contents: read
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v5
         with:
+          persist-credentials: false
           submodules: recursive
 
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      # Pinned. A floating toolchain means the compiler settings, the lint set and the gas numbers in the
+      # README can all change without a commit touching this repository, and the first sign of it is a
+      # failing run nobody caused.
       - name: Install Foundry
         uses: foundry-rs/foundry-toolchain@v1
+        with:
+          version: v1.5.1
 
       - name: Show Forge version
         run: forge --version
@@ -28,12 +38,118 @@ jobs:
         run: forge fmt --check
 
       - name: Run Forge build
-        run: forge build --sizes
+        run: forge build
 
+      # `src/` only, at med and above, where it is clean. The findings in `test/` are test idioms —
+      # unchecked `transfer` return values inside assertions, mock naming, deliberate narrowing casts —
+      # and rewriting them to satisfy the linter would make the tests worse rather than the code safer.
+      #
+      # `-D warnings` is what makes this a gate. Without it `forge lint` prints its findings and exits 0,
+      # so the step passed while a real `unsafe-typecast` warning sat in the hook module — the suppression
+      # comment was attached to the `if` rather than to the cast one line further down. It also promotes
+      # solc's own warnings, which is why `src/` carries no unused parameter names.
+      - name: Run Forge lint
+        run: forge lint src --severity high --severity med -D warnings
+
+      # The combination matrix is generated and committed. If regenerating changes it, the checked-in
+      # file no longer matches the modules it is supposed to cover.
       - name: Check the combination matrix is up to date
         run: |
           node tools/gen-combinations.mjs
-          git diff --exit-code -- test/mocks/Combinations.sol
+          git diff --exit-code test/mocks/Combinations.sol
 
       - name: Run Forge tests
         run: forge test -vvv
+
+      - name: Report contract sizes against EIP-170
+        run: node tools/report-sizes.mjs --check
+
+      # Deploy scripts are not covered by `forge test` — a Solidity test cannot reproduce the sender
+      # semantics of `vm.startBroadcast`, so the only honest way to exercise them is to run them. This
+      # caught a role-revocation ordering bug that compiled and tested clean.
+      # Every authority is given a distinct address so the scripts' own postcondition checks are actually
+      # exercised. With everything pointed at ADMIN they would pass without proving the split works.
+      - name: Simulate every deploy script
+        env:
+          TOKEN_NAME: CI Token
+          TOKEN_SYMBOL: CI
+          ADMIN: "0x1111111111111111111111111111111111111111"
+          FEE_VAULT: "0x2222222222222222222222222222222222222222"
+          FEE_BASIS_POINTS: "250"
+          MAXIMUM_FEE: "1000000000000000000000"
+          FEE_AUTHORITY: "0x3333333333333333333333333333333333333333"
+          RESTRICTION_AUTHORITY: "0x4444444444444444444444444444444444444444"
+          MINT_AUTHORITY: "0x6666666666666666666666666666666666666666"
+          SEIZE_AUTHORITY: "0x9999999999999999999999999999999999999999"
+          METADATA_AUTHORITY: "0x7777777777777777777777777777777777777777"
+          HOOK_AUTHORITY: "0x8888888888888888888888888888888888888888"
+          UPGRADE_AUTHORITY: "0x5555555555555555555555555555555555555555"
+        run: |
+          forge script script/Deploy.s.sol:DeployImmutable
+          forge script script/Deploy.s.sol:DeployUpgradeable
+          forge script script/DeployRuntime.s.sol:DeployRuntime
+          forge script script/DeployRuntime.s.sol:DeployCanonicalToken
+
+      # A zero admin must fail rather than deploy. The token's own zero-admin guard cannot catch this: the
+      # direct scripts initialise with the broadcaster so they can configure the token, then hand the roles
+      # over, so the guard never sees the address that ends up holding them. `grantRole` accepts zero
+      # happily, and the result is a token whose every authority — including the one that could fix it — is
+      # permanently unreachable. Each script is checked separately because each reads the address its own
+      # way: the two direct ones reject it themselves, the canonical one lets the factory reject it.
+      - name: Reject a zero admin
+        env:
+          TOKEN_NAME: CI Token
+          TOKEN_SYMBOL: CI
+          ADMIN: "0x0000000000000000000000000000000000000000"
+          FEE_VAULT: "0x2222222222222222222222222222222222222222"
+          FEE_BASIS_POINTS: "250"
+          MAXIMUM_FEE: "1000000000000000000000"
+        run: |
+          for target in \
+            script/Deploy.s.sol:DeployImmutable \
+            script/Deploy.s.sol:DeployUpgradeable \
+            script/DeployRuntime.s.sol:DeployCanonicalToken
+          do
+            if forge script "$target"; then
+              echo "$target accepted ADMIN=0x0; every role is now permanently unreachable"
+              exit 1
+            fi
+          done
+
+      # Operational authorities are read with a fallback to ADMIN, so leaving one out is fine. Setting one
+      # to zero is not: it is a distinct statement, and the only thing it can be saying is a mistake.
+      - name: Reject a zero operational authority
+        env:
+          TOKEN_NAME: CI Token
+          TOKEN_SYMBOL: CI
+          ADMIN: "0x1111111111111111111111111111111111111111"
+          FEE_VAULT: "0x2222222222222222222222222222222222222222"
+          FEE_BASIS_POINTS: "250"
+          MAXIMUM_FEE: "1000000000000000000000"
+          SEIZE_AUTHORITY: "0x0000000000000000000000000000000000000000"
+        run: |
+          if forge script script/Deploy.s.sol:DeployImmutable; then
+            echo "SEIZE_AUTHORITY=0x0 was accepted; a frozen balance could never be settled"
+            exit 1
+          fi
+
+      # A rate above the ceiling must fail rather than silently truncate into a valid-looking one.
+      - name: Reject an out-of-range fee rate
+        env:
+          TOKEN_NAME: CI Token
+          TOKEN_SYMBOL: CI
+          ADMIN: "0x1111111111111111111111111111111111111111"
+          FEE_VAULT: "0x2222222222222222222222222222222222222222"
+          FEE_BASIS_POINTS: "65636"
+          MAXIMUM_FEE: "1000000000000000000000"
+        run: |
+          if forge script script/Deploy.s.sol:DeployImmutable; then
+            echo "FEE_BASIS_POINTS=65636 was accepted; it truncates to 100"
+            exit 1
+          fi
+
+      - name: Coverage
+        run: |
+          FOUNDRY_PROFILE=coverage forge coverage \
+            --no-match-coverage "^(test|script)/" \
+            --report summary

@@ -9,16 +9,16 @@ solc_version = "0.8.28"
 evm_version = "cancun"          # EIP-1153 transient storage: the hook reentrancy guard uses TSTORE/TLOAD
 optimizer = true
 optimizer_runs = 200
+via_ir = false
 
-[fmt]
-# Generated, and checked byte-for-byte against a fresh run of the generator. Formatting it here would mean
-# the generator had to reproduce the formatter's output exactly, which is a race nobody wins.
-ignore = ["test/mocks/Combinations.sol"]
-line_length = 118
-tab_width = 4
-bracket_spacing = false
-int_types = "long"
-sort_imports = true
+bytecode_hash = "none"
+cbor_metadata = false
+
+[lint]
+# `__Module_init` is OpenZeppelin's initialiser convention. Every upgradeable module in the ecosystem
+# uses it, so matching it is what makes these contracts readable; renaming to satisfy the linter would
+# make them read as something other than what they are.
+exclude_lints = ["mixed-case-function"]
 
 [profile.default.fuzz]
 runs = 512
@@ -30,3 +30,35 @@ depth = 64
 fail_on_revert = false
 call_override = false
 shrink_run_limit = 5000
+
+# `FOUNDRY_PROFILE=intense forge test` before tagging a release. Forge selects the profile from the
+# environment; there is no `--profile` flag.
+[profile.intense.fuzz]
+runs = 20000
+
+[profile.intense.invariant]
+runs = 512
+depth = 256
+
+# Coverage needs the optimizer off, otherwise solc collapses branches and the
+# reported line hits are meaningless.
+[profile.coverage]
+optimizer = false
+via_ir = false
+
+[profile.coverage.fuzz]
+runs = 64
+
+[profile.coverage.invariant]
+runs = 16
+depth = 32
+
+[fmt]
+# Generated, and CI checks it byte-for-byte against a fresh run of the generator. Formatting it here would
+# mean the generator had to reproduce the formatter's output exactly, which is a race nobody wins.
+ignore = ["test/mocks/Combinations.sol"]
+line_length = 118
+tab_width = 4
+bracket_spacing = false
+int_types = "long"
+sort_imports = true
