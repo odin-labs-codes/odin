@@ -18,6 +18,8 @@ pragma solidity ^0.8.24;
  *      in scope in every contract that inherits it, so an error sharing a name with the module contract
  *      would shadow it — and the first place that bites is an `override(...)` list, where the compiler
  *      quietly resolves the name to the error and then reports the contract as missing.
+ *
+ *      Extension data encoding for {IERC20Extensions-extensionData}: empty bytes.
  */
 interface IERC20NonTransferable {
     /// @notice This token cannot be transferred between accounts.

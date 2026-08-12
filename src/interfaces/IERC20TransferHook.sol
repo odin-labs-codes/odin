@@ -14,8 +14,11 @@ pragma solidity ^0.8.24;
  *      - `TRANSFER_HOOK` in `behaviorFlags()` warns that transfers may revert for reasons that have nothing
  *        to do with balances or allowances.
  *
- *      The hook runs *after* balances have settled, and a revert inside it reverts the transfer. See
- *      `ERC20TransferHook` for the exact ordering guarantees.
+ *      The hook runs *after* balances have settled and inside a reentrancy guard, and a revert inside it
+ *      reverts the transfer. See `ERC20TransferHook` for the exact ordering guarantees.
+ *
+ *      Extension data encoding for {IERC20Extensions-extensionData}:
+ *      `abi.encode(address hook, uint32 gasLimit)`.
  */
 interface IERC20TransferHook {
     /// @notice The requested gas limit is outside the range this token accepts.
@@ -56,7 +59,9 @@ interface ITransferHookReceiver {
      * @dev Revert to reject the transfer. Must return `ITransferHookReceiver.onTransfer.selector`; any
      *      other return value rejects the transfer too, so a contract cannot be made a hook by accident.
      *
-     *      Balances are already settled when this runs, so `balanceOf(to)` reflects the transfer.
+     *      Balances are already settled when this runs, so `balanceOf(to)` reflects the transfer. The token
+     *      holds a reentrancy guard for the duration, so calling back into the token's transfer path from
+     *      here reverts.
      *
      * @param token The token making the call. Always `msg.sender`; passed so one hook can serve many tokens
      *        without an extra frame of indirection.

@@ -13,6 +13,9 @@ pragma solidity ^0.8.24;
  *      Storing strings on chain is the kind of expensive that stopped mattering on L2. Storing them off
  *      chain behind a URL is the kind of cheap that costs an integrator a fetch, a parse, and a trust
  *      assumption. This extension makes the on-chain copy the default and the URI the fallback.
+ *
+ *      Extension data encoding for {IERC20Extensions-extensionData}:
+ *      `abi.encode(string tokenURI, uint256 keyCount)`.
  */
 interface IERC20OnchainMetadata {
     /// @notice A metadata key must be a non-empty string.
@@ -27,9 +30,12 @@ interface IERC20OnchainMetadata {
     /**
      * @notice Emitted when a key's value is set or changed.
      * @dev The hash is indexed so a consumer can filter for one key it already knows; the plaintext `key`
-     *      rides in the data so a consumer that knows none of them can still read what changed. An
-     *      `indexed string` is *only* its hash — the string never reaches the log — so carrying both is not
-     *      redundant.
+     *      rides in the data so a consumer that knows none of them can still read what changed.
+     *
+     *      Carrying both is not redundant. An `indexed string` is *only* its hash — the string never
+     *      reaches the log — so an indexer following events alone could never recover the key, and
+     *      {metadataKeys} does not close the gap for a key that was added and removed before the indexer
+     *      looked.
      * @param keyHash `keccak256(bytes(key))`, for filtering.
      * @param key The key itself, readable.
      */

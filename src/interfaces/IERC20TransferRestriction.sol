@@ -13,6 +13,8 @@ pragma solidity ^0.8.24;
  *      Restriction codes are per-token. The codes this framework's reference module uses are documented on
  *      `ERC20TransferRestriction`; a caller should render {messageForTransferRestriction} rather than
  *      hard-coding meanings for anything but `0`.
+ *
+ *      Extension data encoding for {IERC20Extensions-extensionData}: `abi.encode(bool paused)`.
  */
 interface IERC20TransferRestriction {
     /// @notice A transfer was attempted that {detectTransferRestriction} would have rejected.
