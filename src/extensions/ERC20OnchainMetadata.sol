@@ -7,7 +7,7 @@ import {ERC20ExtensionCore} from "./ERC20ExtensionCore.sol";
 
 /**
  * @title ERC20OnchainMetadata
- * @notice Enumerable key/value metadata kept on chain.
+ * @notice Enumerable key/value metadata kept on chain, plus an ERC-1046 `tokenURI`.
  *
  * @dev This module never touches the transfer path and declares no behaviour flags, which is the point:
  *      metadata is the cheap kind of heavy. Reading and writing strings costs computation, and computation
@@ -16,8 +16,6 @@ import {ERC20ExtensionCore} from "./ERC20ExtensionCore.sol";
  *
  *      `name`, `symbol` and `decimals` are deliberately left alone — they stay exactly where ERC-20 put
  *      them. This store is for everything ERC-20 has no slot for.
- *
- * @custom:storage-location erc7201:berc.storage.OnchainMetadata
  */
 abstract contract ERC20OnchainMetadata is ERC20ExtensionCore, IERC20OnchainMetadata {
     /// @custom:storage-location erc7201:berc.storage.OnchainMetadata

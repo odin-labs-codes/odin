@@ -3,98 +3,92 @@ pragma solidity ^0.8.24;
 
 import {Test} from "forge-std/Test.sol";
 
-import {ERC20NonTransferable} from "../src/extensions/ERC20NonTransferable.sol";
 import {IERC20NonTransferable} from "../src/interfaces/IERC20NonTransferable.sol";
 import {BehaviorFlags} from "../src/libraries/BehaviorFlags.sol";
 import {ExtensionIds} from "../src/libraries/ExtensionIds.sol";
+import {Combo_MRN} from "./mocks/Combinations.sol";
 
-/// @dev `ExtendedToken` cannot carry this module — `NON_TRANSFERABLE` contradicts both `FEE_ON_TRANSFER`
-///      and `TRANSFER_HOOK`, so an assembly with all of them reverts in its own constructor. This is the
-///      smallest assembly that can hold it.
-contract SoulboundToken is ERC20NonTransferable {
-    constructor(string memory name_, string memory symbol_) {
-        _init(name_, symbol_);
-        _disableInitializers();
-    }
-
-    function _init(string memory name_, string memory symbol_) private initializer {
-        __ERC20_init(name_, symbol_);
-        __ERC20ExtensionCore_init();
-        __ERC20NonTransferable_init();
-        _sealExtensions();
-    }
-
-    function mint(address to, uint256 value) external {
-        _mint(to, value);
-    }
-
-    function burn(address from, uint256 value) external {
-        _burn(from, value);
-    }
-
-    function _authorizeExtensionConfig(bytes4) internal view virtual override {}
-}
-
+/**
+ * @title NonTransferableTest
+ * @notice Soulbound behaviour, assembled alongside metadata and transfer restrictions.
+ *
+ * @dev This combination is the reason the module exists: a credential that cannot be traded, that carries
+ *      its issuer's data on chain, and that the issuer can still freeze and burn.
+ */
 contract NonTransferableTest is Test {
-    SoulboundToken internal token;
+    Combo_MRN internal token;
 
     address internal alice = makeAddr("alice");
     address internal bob = makeAddr("bob");
 
     function setUp() public {
-        token = new SoulboundToken("Soulbound", "SBT");
-        token.mint(alice, 100e18);
+        token = new Combo_MRN("Soulbound", "SBT");
+        token.mint(alice, 1000e18);
     }
 
-    function test_MintingWorks() public view {
-        assertEq(token.balanceOf(alice), 100e18);
-    }
-
-    function test_BurningWorks() public {
-        token.burn(alice, 40e18);
-
-        assertEq(token.balanceOf(alice), 60e18);
-    }
-
-    function test_RevertWhen_Transferring() public {
+    function test_TransferAlwaysReverts() public {
         vm.expectRevert(IERC20NonTransferable.ERC20TransfersNotSupported.selector);
         vm.prank(alice);
         token.transfer(bob, 1e18);
     }
 
-    function test_RevertWhen_TransferringFrom() public {
+    function test_TransferFromAlwaysReverts() public {
         vm.prank(alice);
-        token.approve(bob, 1e18);
+        token.approve(bob, type(uint256).max);
 
         vm.expectRevert(IERC20NonTransferable.ERC20TransfersNotSupported.selector);
         vm.prank(bob);
         token.transferFrom(alice, bob, 1e18);
     }
 
-    function test_RevertWhen_TransferringToSelf() public {
+    /// @dev Even a zero-value transfer is refused: the restriction is on the operation, not the amount.
+    function test_ZeroValueTransferReverts() public {
+        vm.expectRevert(IERC20NonTransferable.ERC20TransfersNotSupported.selector);
+        vm.prank(alice);
+        token.transfer(bob, 0);
+    }
+
+    /// @dev Self-transfers are refused too. Allowing them would be harmless but would make the rule
+    ///      conditional, and a conditional rule is one an integrator has to read the source to learn.
+    function test_SelfTransferReverts() public {
         vm.expectRevert(IERC20NonTransferable.ERC20TransfersNotSupported.selector);
         vm.prank(alice);
         token.transfer(alice, 1e18);
     }
 
+    /// @dev Approvals still work. An allowance on a token that cannot move is inert, and removing it would
+    ///      break wallets that approve before transferring.
     function test_ApproveStillWorks() public {
         vm.prank(alice);
-        token.approve(bob, 5e18);
-
-        // An allowance on a token that cannot move is harmless, and wallets set one before transferring.
-        assertEq(token.allowance(alice, bob), 5e18);
+        assertTrue(token.approve(bob, 500e18));
+        assertEq(token.allowance(alice, bob), 500e18);
     }
 
-    function test_TheExtensionIsDiscoverable() public view {
+    function test_MintAndBurnStillMoveSupply() public {
+        token.mint(bob, 250e18);
+        assertEq(token.balanceOf(bob), 250e18);
+
+        token.burn(bob, 100e18);
+        assertEq(token.balanceOf(bob), 150e18);
+        assertEq(token.totalSupply(), 1000e18 + 150e18);
+    }
+
+    function test_ItSaysSo() public view {
+        assertGt(token.behaviorFlags() & BehaviorFlags.NON_TRANSFERABLE, 0);
         assertTrue(token.hasExtension(ExtensionIds.NON_TRANSFERABLE));
-        assertEq(token.extensions().length, 1);
+        // And it never claims a fee it could not charge.
+        assertEq(token.behaviorFlags() & BehaviorFlags.FEE_ON_TRANSFER, 0);
+        assertEq(token.behaviorFlags() & BehaviorFlags.TRANSFER_HOOK, 0);
     }
 
-    function test_NonTransferableIsDeclared() public view {
-        assertEq(token.behaviorFlags(), BehaviorFlags.NON_TRANSFERABLE);
-    }
-
-    function test_ExtensionDataIsEmptyRatherThanReverting() public view {
+    function test_ExtensionDataIsEmptyBecauseThereIsNothingToConfigure() public view {
         assertEq(token.extensionData(ExtensionIds.NON_TRANSFERABLE).length, 0);
+    }
+
+    /// @dev The restriction module still applies to the flows that remain reachable.
+    function test_FreezingStillBlocksMinting() public {
+        token.setFrozen(bob, true);
+        vm.expectRevert();
+        token.mint(bob, 1e18);
     }
 }

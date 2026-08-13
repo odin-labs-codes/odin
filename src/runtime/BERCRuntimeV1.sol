@@ -13,7 +13,9 @@ import {ExtensionIds} from "../libraries/ExtensionIds.sol";
  *
  * @dev Token-2022's guarantees come from there being exactly one program. A wallet does not audit each mint;
  *      it audits the program once, and every mint inherits that audit. This contract is the closest an EVM
- *      chain gets: deployed once, never upgraded, and pointed at by every token built on it.
+ *      chain gets: deployed once, never upgraded, and pointed at by every token the canonical factory
+ *      produces. What an integrator verifies is not this token but this address, and the verification is a
+ *      bytecode comparison rather than a question put to the token — see {BERCVerification}.
  *
  *      ## Why a clone rather than a proxy the token controls
  *
@@ -30,11 +32,11 @@ import {ExtensionIds} from "../libraries/ExtensionIds.sol";
  *
  *      ## Why every module is inherited but only some are installed
  *
- *      A token on a shared runtime cannot add code, so the runtime has to carry every extension any token
- *      might want, and each token turns on a subset. Modules that read configuration are naturally inert
- *      when unconfigured — an unregistered fee module has a zero rate, an unregistered restriction module
- *      blocks nothing. The one exception is `ERC20NonTransferable`, whose check is unconditional by
- *      design, so it is gated on registration through `_nonTransferableActive`.
+ *      A clone cannot add code, so the runtime has to carry every extension any token might want, and each
+ *      token turns on a subset. Modules that read configuration are naturally inert when unconfigured — an
+ *      unregistered fee module has a zero rate, an unregistered restriction module blocks nothing. The one
+ *      exception is `ERC20NonTransferable`, whose check is unconditional by design, so it is gated on
+ *      registration through `_nonTransferableActive`.
  *
  *      Because the setters for every module exist on every token, `_authorizeExtensionConfig` rejects
  *      configuration of extensions this token did not install. Without that, a token reporting no fee
@@ -57,21 +59,23 @@ contract BERCRuntimeV1 is ExtendedTokenBase, ERC20NonTransferable {
     uint256 public constant RUNTIME_VERSION = 1;
 
     /**
-     * @dev Locks the implementation's own storage, so this address can never be initialised directly and
-     *      then presented as a token in its own right.
+     * @dev Locks the implementation's own storage. Without it this contract could be initialised directly,
+     *      giving an address that passes no clone check but answers every BERC call — a decoy that looks
+     *      canonical to anyone who verified by calling rather than by reading code.
      */
     constructor() {
         _disableInitializers();
     }
 
     /**
-     * @notice Initialises one token on this runtime. Callable exactly once.
+     * @notice Initialises one clone. Callable exactly once, and only on a clone.
      * @param extensionIds The extensions to install, from {ExtensionIds}. May be empty, which produces a
      *        token whose transfers behave exactly like a plain ERC-20's — a useful thing to be able to
      *        prove. It is still not a plain ERC-20: like every token on this runtime it declares
      *        `MINTABLE | SEIZABLE`, because `mint` and `burn(from, value)` live on the shared base and no
      *        extension set can remove them.
-     * @param admin Receives every role.
+     * @param admin Receives every role. {BERCFactoryV1} passes itself here, applies the initial
+     *        configuration, and hands the roles on before the transaction ends.
      */
     function initialize(string calldata name_, string calldata symbol_, address admin, bytes4[] calldata extensionIds)
         external

@@ -204,14 +204,14 @@ contract BERCFactoryV1 {
         return authority == address(0) ? admin : authority;
     }
 
-    function _salt(address deployer, bytes32 salt) private pure returns (bytes32) {
-        return keccak256(abi.encode(deployer, salt));
-    }
-
     function _requests(bytes4[] calldata extensionIds, bytes4 wanted) private pure returns (bool) {
         for (uint256 i = 0; i < extensionIds.length; ++i) {
             if (extensionIds[i] == wanted) return true;
         }
         return false;
+    }
+
+    function _salt(address deployer, bytes32 salt) private pure returns (bytes32) {
+        return keccak256(abi.encode(deployer, salt));
     }
 }

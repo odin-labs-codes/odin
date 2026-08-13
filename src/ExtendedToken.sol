@@ -9,15 +9,18 @@ import {ExtendedTokenBase} from "./ExtendedTokenBase.sol";
  *         fully declared one to anyone who has.
  *
  * @dev Deployed directly, with no proxy in front of it. Everything it does is fixed at deployment: the
- *      extension set, the behaviour word, and the code itself. This contract has no upgrade function, no
- *      admin slot, and `_disableInitializers()` runs at the end of the constructor so the initialisation path
- *      can never be re-entered, including through a delegatecall from somewhere else.
+ *      extension set, the behaviour word, and the code itself. `behaviorFlags()` does not set `UPGRADEABLE`,
+ *      and that claim is structural rather than a promise — this contract has no upgrade function, no admin
+ *      slot, and `_disableInitializers()` runs at the end of the constructor so the initialisation path can
+ *      never be re-entered, including through a delegatecall from somewhere else.
  *
  *      ## Why an "immutable" contract is built on the upgradeable libraries
  *
- *      The extension modules are written once, against `ERC20Upgradeable`, and serve both this contract and
- *      whatever proxied shell comes next. The alternative — two parallel trees — would mean the fee
- *      arithmetic and the transfer pipeline existed in two places. One implementation, two shells.
+ *      The extension modules are written once, against `ERC20Upgradeable` and ERC-7201 namespaced storage,
+ *      and serve both this contract and `ExtendedTokenUpgradeable`. The alternative — two parallel trees —
+ *      would mean the fee arithmetic and the transfer pipeline existed in two places, and the pipeline is
+ *      the part of this codebase where a divergence would be least visible and most expensive. One
+ *      implementation, two shells.
  *
  *      The only thing `ERC20Upgradeable` changes at runtime is which slot the balance mapping lives in.
  *      Every function, event and revert an integrator can observe is identical to `ERC20`.
@@ -40,7 +43,7 @@ contract ExtendedToken is ExtendedTokenBase {
      */
     function _initializeExtendedToken(string memory name_, string memory symbol_, address admin) private initializer {
         __ExtendedTokenBase_init(name_, symbol_, admin, _defaultExtensions());
-        // Fixes the extension set. Must be last.
+        // Fixes the extension set and rejects contradictory behaviour declarations. Must be last.
         _sealExtensions();
     }
 }

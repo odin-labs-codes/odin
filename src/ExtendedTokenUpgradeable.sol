@@ -22,13 +22,13 @@ import {BehaviorFlags} from "./libraries/BehaviorFlags.sol";
  *
  *      **An upgrade must not change the extension set.** Registration happens in the initialiser, which
  *      cannot run twice, so the registry keeps whatever the first implementation wrote. A new implementation
- *      that inherited an additional module would run that module's transfer phases while `extensions()` and
+ *      that inherits an additional module would run that module's transfer phases while `extensions()` and
  *      `behaviorFlags()` continued to report the old set — undeclared behaviour, which is the one failure
  *      this framework exists to prevent. Removing a module is equally wrong in the other direction.
  *
  *      Nothing on chain can enforce this, because the proxy cannot inspect the module set of an
  *      implementation it has not yet delegated into. It is a governance obligation, and `UPGRADEABLE` is the
- *      warning that the obligation exists.
+ *      warning that the obligation exists. `UpgradeTest` pins the extension set across a real upgrade.
  *
  *      ## Storage
  *
@@ -55,7 +55,7 @@ contract ExtendedTokenUpgradeable is ExtendedTokenBase, UUPSUpgradeable {
 
         _grantRole(UPGRADER_ROLE, admin);
 
-        // Declared before sealing, so it is covered by the same checks as the modules' declarations.
+        // Declared before sealing, so it is covered by the same compatibility check as the modules'.
         _declareBehavior(BehaviorFlags.UPGRADEABLE);
         _sealExtensions();
     }

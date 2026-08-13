@@ -23,6 +23,12 @@ import {ERC20ExtensionCore} from "./ERC20ExtensionCore.sol";
  *        back into any balance-moving path on this token reverts. The guard lives in this module rather
  *        than in `ERC20ExtensionCore` so that an assembly built without this module pays nothing for it; a
  *        token with no external calls on its transfer path has no reentrancy to guard against.
+ *
+ *        That saving does not extend to a shared runtime, which inherits every module and therefore runs
+ *        the guard whether or not a given token installed the hook extension. Gating it on the hook being
+ *        set was measured and rejected: the `SLOAD` such a gate needs costs more than the `TSTORE`/`TLOAD`
+ *        pair it would skip. The consequence is that every canonical token needs EIP-1153 — which the
+ *        whole build needs regardless; see the chain-support note in the README.
  *      - **Bounded.** The hook gets exactly {transferHookGasLimit} gas, published so integrators can budget
  *        a worst case instead of discovering it. The EVM withholds 1/64 of the remaining gas from any call,
  *        so a caller must actually hold slightly more than this for the hook to receive its full budget.
@@ -32,8 +38,6 @@ import {ERC20ExtensionCore} from "./ERC20ExtensionCore.sol";
  *        reasons unrelated to balances.
  *
  *      Mint and burn do not fire the hook; phase 4 only runs for transfers between two real accounts.
- *
- * @custom:storage-location erc7201:berc.storage.TransferHook
  */
 abstract contract ERC20TransferHook is ERC20ExtensionCore, ReentrancyGuardTransientUpgradeable, IERC20TransferHook {
     /// @notice Floor on the configurable gas limit. Below this a hook cannot do anything useful.
@@ -164,6 +168,7 @@ abstract contract ERC20TransferHook is ERC20ExtensionCore, ReentrancyGuardTransi
         // Discarding the low-order 28 bytes is the point, not a hazard: `bytes4(bytes32)` keeps the
         // high-order four, which is where the ABI puts a `bytes4` return value in its word — the same
         // bytes `abi.decode(..., (bytes4))` would have read.
+        // forge-lint: disable-next-line(unsafe-typecast)
         bytes4 selector = bytes4(acknowledgement);
         if (returnedSize != HOOK_RETURNDATA_LIMIT || selector != ITransferHookReceiver.onTransfer.selector) {
             revert ERC20TransferHookNotAcknowledged(hook);
