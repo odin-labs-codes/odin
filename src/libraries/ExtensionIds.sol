@@ -11,10 +11,17 @@ pragma solidity ^0.8.24;
  *      derived from a name instead:
  *
  *          id = bytes4(keccak256("erc20.extension.<camelCaseName>"))
+ *          id = bytes4(keccak256("erc721.extension.<camelCaseName>"))
  *
  *      The names describe what the extension does. They contain no draft ERC number, because a draft
  *      number is a placeholder that changes on the way to Final and would take every deployed token's
  *      identifiers with it.
+ *
+ *      The token type is part of the name, so `nonTransferable` on an ERC-20 and on an ERC-721 are
+ *      different identifiers. They have to be: the modules take different arguments, hold different
+ *      storage, and an integrator resolving an ID against the wrong token type would read a configuration
+ *      that does not exist. The shared vocabulary is {BehaviorFlags}, which describes *behaviour*; these
+ *      identify *code*, and code does not cross token types.
  */
 library ExtensionIds {
     /// @notice Enumerable on-chain key/value metadata, with an ERC-1046 `tokenURI` as a secondary source.
@@ -31,4 +38,14 @@ library ExtensionIds {
 
     /// @notice A gas-bounded call into a policy contract after every transfer.
     bytes4 internal constant TRANSFER_HOOK = bytes4(keccak256("erc20.extension.transferHook"));
+
+    // -----------------------------------------------------------------------------------------------
+    // ERC-721
+    // -----------------------------------------------------------------------------------------------
+
+    /// @notice ERC-1404 style transfer restrictions: pause and per-account freeze.
+    bytes4 internal constant NFT_TRANSFER_RESTRICTION = bytes4(keccak256("erc721.extension.transferRestriction"));
+
+    /// @notice A `tokenURI` an authority can rewrite, until it freezes the collection permanently.
+    bytes4 internal constant NFT_MUTABLE_METADATA = bytes4(keccak256("erc721.extension.mutableMetadata"));
 }
