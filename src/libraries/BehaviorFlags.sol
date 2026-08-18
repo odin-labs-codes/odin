@@ -72,6 +72,18 @@ library BehaviorFlags {
     uint256 internal constant SEIZABLE = 1 << 8;
 
     /**
+     * @notice A transfer made by an operator can be refused because of who the operator is.
+     * @dev Non-fungible tokens only; a fungible token never sets this, because `ERC20._update` is not told
+     *      who authorised the transfer and so has nothing to apply a policy to.
+     *
+     *      This is the flag a marketplace needs and cannot get any other way. Whether its exchange contract
+     *      is permitted to move a collection's tokens is invisible until a listing settles, or fails to —
+     *      the token screens the *caller*, so simulating a transfer the owner makes themselves proves
+     *      nothing about the transfer the marketplace will make. Read it with `isOperatorAllowed`.
+     */
+    uint256 internal constant OPERATOR_RESTRICTED = 1 << 9;
+
+    /**
      * @notice An authority can rewrite what a token *is* after it has been minted.
      * @dev Non-fungible tokens only. `tokenURI` is not decoration: it is where the traits live, and anyone
      *      pricing a token — a lending protocol taking it as collateral, an index weighting a collection —
@@ -86,7 +98,7 @@ library BehaviorFlags {
 
     /// @notice Every bit this library currently assigns meaning to. Bits outside this mask are reserved.
     uint256 internal constant ALL = FEE_ON_TRANSFER | REBASING | TRANSFER_HOOK | PAUSABLE | BLOCKLIST
-        | NON_TRANSFERABLE | UPGRADEABLE | MINTABLE | SEIZABLE | METADATA_MUTABLE;
+        | NON_TRANSFERABLE | UPGRADEABLE | MINTABLE | SEIZABLE | OPERATOR_RESTRICTED | METADATA_MUTABLE;
 
     /**
      * @notice Returns the first pair of declared behaviours that contradict each other, or `(0, 0)` if
@@ -103,6 +115,7 @@ library BehaviorFlags {
         if (flags & NON_TRANSFERABLE != 0) {
             if (flags & FEE_ON_TRANSFER != 0) return (NON_TRANSFERABLE, FEE_ON_TRANSFER);
             if (flags & TRANSFER_HOOK != 0) return (NON_TRANSFERABLE, TRANSFER_HOOK);
+            if (flags & OPERATOR_RESTRICTED != 0) return (NON_TRANSFERABLE, OPERATOR_RESTRICTED);
         }
         return (0, 0);
     }

@@ -43,6 +43,12 @@ library ExtensionIds {
     // ERC-721
     // -----------------------------------------------------------------------------------------------
 
+    /// @notice A transfer made by an operator is screened against a policy naming that operator.
+    bytes4 internal constant NFT_OPERATOR_RESTRICTION = bytes4(keccak256("erc721.extension.operatorRestriction"));
+
+    /// @notice Transfers between non-zero addresses always revert; only mint and burn move a token.
+    bytes4 internal constant NFT_NON_TRANSFERABLE = bytes4(keccak256("erc721.extension.nonTransferable"));
+
     /// @notice ERC-1404 style transfer restrictions: pause and per-account freeze.
     bytes4 internal constant NFT_TRANSFER_RESTRICTION = bytes4(keccak256("erc721.extension.transferRestriction"));
 
