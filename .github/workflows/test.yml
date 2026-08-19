@@ -84,11 +84,17 @@ jobs:
           METADATA_AUTHORITY: "0x7777777777777777777777777777777777777777"
           HOOK_AUTHORITY: "0x8888888888888888888888888888888888888888"
           UPGRADE_AUTHORITY: "0x5555555555555555555555555555555555555555"
+          OPERATOR_POLICY_AUTHORITY: "0xaAaA000000000000000000000000000000000000"
+          BASE_URI: "ipfs://ci/"
         run: |
           forge script script/Deploy.s.sol:DeployImmutable
           forge script script/Deploy.s.sol:DeployUpgradeable
           forge script script/DeployRuntime.s.sol:DeployRuntime
           forge script script/DeployRuntime.s.sol:DeployCanonicalToken
+          forge script script/DeployNFTRuntime.s.sol:DeployNFTRuntime
+          forge script script/DeployNFTRuntime.s.sol:DeployCanonicalCollection
+          WITH_SOULBOUND=true WITH_OPERATOR_POLICY=false \
+            forge script script/DeployNFTRuntime.s.sol:DeployCanonicalCollection
 
       # A zero admin must fail rather than deploy. The token's own zero-admin guard cannot catch this: the
       # direct scripts initialise with the broadcaster so they can configure the token, then hand the roles
@@ -108,7 +114,8 @@ jobs:
           for target in \
             script/Deploy.s.sol:DeployImmutable \
             script/Deploy.s.sol:DeployUpgradeable \
-            script/DeployRuntime.s.sol:DeployCanonicalToken
+            script/DeployRuntime.s.sol:DeployCanonicalToken \
+            script/DeployNFTRuntime.s.sol:DeployCanonicalCollection
           do
             if forge script "$target"; then
               echo "$target accepted ADMIN=0x0; every role is now permanently unreachable"

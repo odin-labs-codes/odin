@@ -15,7 +15,16 @@ const EIP170_LIMIT = 24_576;
 // Only contracts this project ships. Test mocks and library helpers are not deployed by anyone.
 // `BERCRuntimeV1` is the one to watch: a clone cannot add code, so every extension any canonical token
 // might want has to fit inside this single deployment, and its headroom is what caps V1's extension count.
-const TRACKED = new Set(["ExtendedToken", "ExtendedTokenUpgradeable", "BERCRuntimeV1", "BERCFactoryV1"]);
+const TRACKED = new Set([
+  "ExtendedToken",
+  "ExtendedTokenUpgradeable",
+  "BERCRuntimeV1",
+  "BERCFactoryV1",
+  "ExtendedNFT",
+  "SoulboundNFT",
+  "BERCNFTRuntimeV1",
+  "BERCNFTFactoryV1",
+]);
 
 execFileSync("forge", ["build"], {stdio: "inherit", shell: process.platform === "win32"});
 
@@ -43,6 +52,16 @@ for (const path of artifacts("out")) {
 
   const size = (object.length - 2) / 2;
   rows.push({name, size, pct: (size / EIP170_LIMIT) * 100});
+}
+
+// A tracked contract that produced no row is not "nothing to report" — it means the artifact on disk has
+// no deployed bytecode, which is what `forge coverage` leaves behind. Silently printing a shorter table
+// would publish a size report missing exactly the contract someone forgot to check.
+const missing = [...TRACKED].filter((name) => !rows.some((row) => row.name === name));
+if (missing.length > 0) {
+  console.error(`No deployed bytecode for: ${missing.join(", ")}`);
+  console.error("A `forge coverage` run leaves artifacts without it. Run `forge clean` and try again.");
+  process.exit(1);
 }
 
 rows.sort((a, b) => b.size - a.size);

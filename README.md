@@ -1,4 +1,4 @@
-# BERC — a modular ERC-20 extension framework
+# BERC — a modular token extension framework
 
 Inspired by Solana's Token-2022, built for a chain that has no shared runtime to lean on. *Inspired by* is
 the exact claim: this is not compatible with Token-2022 and does not reproduce its semantics. Its fee
@@ -15,6 +15,9 @@ simulate a transfer and hope the result generalises.
 This project is the missing half. Not new capabilities — fee-on-transfer, pausing, freezing and hooks all
 exist today — but a way for a token to **say what it does**, in a form that costs one `view` call to read and
 is fixed for the life of the deployment.
+
+It covers ERC-20 and ERC-721. The two halves share one vocabulary and nothing else — see
+[the non-fungible half](#the-non-fungible-half) for what carries over and what cannot.
 
 > The problem with fee-on-transfer tokens was never the fee. It was that you had to find out by losing money.
 
@@ -97,9 +100,21 @@ token's declarations are produced by code an integrator can check rather than tr
 | `0x2c0ebf42` | [`ERC20NonTransferable`](src/extensions/ERC20NonTransferable.sol)                    | `NON_TRANSFERABLE`      | *nothing — that is the point*             |
 | `0xf71cd3fe` | [`ERC20TransferHook`](src/extensions/ERC20TransferHook.sol)                          | `TRANSFER_HOOK`         | target contract, gas budget               |
 
-IDs are `bytes4(keccak256("erc20.extension.<name>"))` — derived from a name rather than from
-`type(I).interfaceId`, so adding a view function to an interface does not silently change every deployed
-token's identifier.
+And for ERC-721:
+
+| Module                                                                    | Declares                | Configurable                       |
+| ------------------------------------------------------------------------- | ----------------------- | ---------------------------------- |
+| [`ERC721OperatorRestriction`](src/erc721/ERC721OperatorRestriction.sol)    | `OPERATOR_RESTRICTED`   | allowlist membership, and whether it is enforced |
+| [`ERC721TransferRestriction`](src/erc721/ERC721TransferRestriction.sol)    | `PAUSABLE`, `BLOCKLIST` | global pause, per-account freeze    |
+| [`ERC721MutableMetadata`](src/erc721/ERC721MutableMetadata.sol)            | `METADATA_MUTABLE`      | base URI, per-token URI, one-way freeze |
+| [`ERC721NonTransferable`](src/erc721/ERC721NonTransferable.sol)            | `NON_TRANSFERABLE`      | *nothing — that is the point*      |
+
+IDs are `bytes4(keccak256("erc20.extension.<name>"))`, or `erc721.` for the non-fungible ones — derived
+from a name rather than from `type(I).interfaceId`, so adding a view function to an interface does not
+silently change every deployed token's identifier. The token type is part of the name, so `nonTransferable`
+on an ERC-20 and on an ERC-721 are deliberately different identifiers: the modules hold different storage
+and take different arguments, and an integrator resolving one against the wrong token type would read a
+configuration that does not exist.
 
 ### Behaviour flags
 
@@ -114,6 +129,8 @@ token's identifier.
 | 6   | `UPGRADEABLE`      | `64`  | The code can be replaced, so every other flag can change      |
 | 7   | `MINTABLE`         | `128` | An authority can create supply and dilute every holder        |
 | 8   | `SEIZABLE`         | `256` | An authority can destroy any account's balance                |
+| 9   | `OPERATOR_RESTRICTED` | `512` | ERC-721 only: a transfer can be refused for *who asked*    |
+| 10  | `METADATA_MUTABLE` | `1024` | ERC-721 only: an authority can rewrite what a token *is*     |
 
 A flag is set when the extension is **installed**, not when it is currently **active**: a token whose fee
 rate is zero still declares `FEE_ON_TRANSFER`, because the authority can raise it. False positives cost an
@@ -121,7 +138,8 @@ integrator one defensive branch; false negatives cost them funds.
 
 Bits 0–5 describe the token's own observable behaviour — five of them change what a transfer does, and
 `REBASING` shows up instead as a balance that moved with no `Transfer` naming the account. Bits 6–8
-describe powers an authority holds, which nothing reveals until they are used. Both reference tokens set
+describe powers an authority holds, which nothing reveals until they are used. Bit 9 and up are behaviours
+only a non-fungible token can have, and a fungible one never sets them. Both reference tokens set
 `MINTABLE | SEIZABLE` unconditionally, because `mint` and `burn(from, value)` are on the shared base and
 neither is optional. Without those bits a token with no extensions would report `0`, which the vocabulary
 defines as indistinguishable from a plain ERC-20, while its supply authority could dilute every holder and
@@ -241,13 +259,17 @@ Nothing in this section is estimated.
 
 | Contract                   | bytes  | of the 24,576 limit | free   |
 | -------------------------- | ------ | ------------------- | ------ |
-| `ExtendedTokenUpgradeable` | 20,043 | 81.6%               | 4,533  |
-| `BERCRuntimeV1`            | 18,053 | 73.5%               | 6,523  |
+| `ExtendedTokenUpgradeable` | 20,066 | 81.6%               | 4,510  |
+| `BERCRuntimeV1`            | 18,076 | 73.6%               | 6,500  |
 | `ExtendedToken`            | 15,442 | 62.8%               | 9,134  |
+| `BERCNFTRuntimeV1`         | 13,202 | 53.7%               | 11,374 |
+| `ExtendedNFT`              | 10,587 | 43.1%               | 13,989 |
+| `SoulboundNFT`             | 9,855  | 40.1%               | 14,721 |
 | `BERCFactoryV1`            | 4,195  | 17.1%               | 20,381 |
+| `BERCNFTFactoryV1`         | 4,075  | 16.6%               | 20,501 |
 
 `BERCRuntimeV1` is the row that constrains the design. A clone cannot add code, so every extension any
-canonical token might ever want has to fit inside that one deployment — its 6,523 free bytes are the budget
+canonical token might ever want has to fit inside that one deployment — its 6,500 free bytes are the budget
 for everything V1 will ever support, which is why V1 ships the five modules it has and new capability
 arrives as a new runtime rather than as an addition to this one.
 
@@ -270,7 +292,7 @@ What is not free is the fee and the hook — and those are precisely what `behav
 
 ### Tests — `forge test`
 
-238 tests, all passing.
+334 tests, all passing.
 
 | Suite | What it establishes |
 | --- | --- |
@@ -290,16 +312,20 @@ What is not free is the fee and the hook — and those are precisely what `behav
 | [`Constants`](test/Constants.t.sol) | The published extension IDs and the ERC-7201 slot literals still match their derivations — checked against live storage, so a reordered struct fails too. |
 | [`Upgrade`](test/Upgrade.t.sol) | `UPGRADEABLE` is declared; an upgrade carries every declaration and all state across unchanged. |
 | [`Gas`](test/Gas.t.sol) | Produces the gas table above, and pins that reading a token's declarations costs its transfer path nothing. |
+| [`ExtendedNFT`](test/erc721/ExtendedNFT.t.sol) | The non-fungible existence proof: a marketplace holding a valid approval fails at settlement, and the same marketplace one `view` earlier declines to list. Plus the policy's edges — the owner is never screened, mint and burn are never screened, approval is deliberately not gated. |
+| [`ERC721Modules`](test/erc721/ERC721Modules.t.sol) | Pause and freeze on a collection, with the two asymmetries that keep them usable; and metadata rewritten under a holder who never moved, then frozen one-way. |
+| [`NFTRuntime`](test/erc721/NFTRuntime.t.sol) | The non-fungible verified tier: collections verify against the runtime with the unchanged library, the two runtimes do not verify against each other, uninstalled modules stay inert, and roles are split inside the deployment. |
+| [`ERC721FrameworkGuards`](test/erc721/ERC721FrameworkGuards.t.sol) | The non-fungible guard rails: soulbound combined with an operator policy is rejected at construction, double registration and registration after sealing fail, an installed module with no role mapped authorises nobody, and the ERC-7201 namespaces do not collide with the fungible ones. |
 
 ### Coverage — `FOUNDRY_PROFILE=coverage forge coverage --no-match-coverage "^(test|script)/"`
 
 | | lines | statements | branches | functions |
 | --- | --- | --- | --- | --- |
-| `src/` | **98.84%** | **99.29%** | **95.05%** | **98.37%** |
+| `src/` | **98.57%** | **98.86%** | **96.79%** | **97.70%** |
 
-Ten of the thirteen source files are at 100% of lines, including all of `runtime/` and `BERCVerification`.
-Everything uncovered is unreachable from any public entry point, and each piece is unreachable for a
-reason worth stating:
+Nineteen of the twenty-two source files are at 100% of lines, including every non-fungible module, both
+runtimes, both factories and `BERCVerification`. Everything uncovered is either unreachable from a public
+entry point or an artefact of how coverage attributes forwarding code, and each piece is worth stating:
 
 - the neutral base implementations of `_accountFrozen` and `_accountFeeExempt` in `ERC20ExtensionCore`,
   which every module overrides;
@@ -311,6 +337,83 @@ reason worth stating:
 The first two exist for third-party assemblies that add a module this repository does not ship. The third
 is a guard on an arithmetic argument, kept so that editing the comparison it depends on fails loudly
 instead of silently returning a wrong number.
+
+One more comes from the non-fungible half. `ExtendedNFT.sol` reports 85.71% of lines, and every uncovered
+one is a `super.X()` forwarding override that Solidity requires when two parents declare the same function.
+They do execute — the operator policy fires through `ExtendedNFT._checkTransferAllowed`, `tokenURI` resolves
+through the metadata module, and `supportsInterface` is asserted directly. solc deduplicates the identical
+forwarding bodies shared with the runtime and the test assemblies, so the hits are attributed to one copy
+and the others read as cold. It is a measurement artefact, not a gap — and the clearest evidence is that the
+figure moved from 50% to 85.71% when more assemblies were added, without a line of `ExtendedNFT.sol`
+changing.
+
+---
+
+## The non-fungible half
+
+Half the framework ports to ERC-721 unchanged. The most complicated half does not port at all, and what
+replaces it is a sharper case for the whole idea.
+
+**What carries over.** The declaration layer is token-agnostic — `behaviorFlags()`, `extensions()`,
+`extensionData()` have the same selectors on both sides, so an integrator holding an unclassified address
+can ask before knowing which standard it implements. So is the verified tier: `BERCVerification` compares
+45 bytes of EIP-1167 prologue, address and epilogue, and has no opinion about what the implementation
+behind them is. `ERC721._update` is a single choke point exactly like the fungible one, so phase order is
+fixed in one place here too.
+
+**What cannot.** There is no transfer fee, because withholding 2.5% of token #42 is not a thing that
+exists. Everything built on top of the fee goes with it: `computeFee`, the exact-output inverse, and
+checked transfers with a `minAmountReceived` floor — the recipient either gets #42 or does not, so there is
+no amount to check. A fee could be charged in a *different* asset without touching calldata, but then an
+NFT transfer reverts because of a balance in an unrelated contract, and what needs declaring stops being a
+rate and becomes "this transfer will pull X of token Y from you". That is a different extension, and it is
+why EIP-2981 royalties are advisory rather than enforced.
+
+**What replaces it is better.** A fee shows up when an integrator simulates a transfer. An operator policy
+does not. A collection can move perfectly for its owner and refuse every transfer one marketplace attempts,
+because the screening is on the **caller** — so simulating the owner's own transfer proves nothing about
+the transfer the marketplace will make. It surfaces at settlement, and it looks like a bug in the
+marketplace. `ERC721._update` receives the authorising address, which `ERC20._update` never does, so the
+policy is enforceable at the choke point and readable one `view` in advance:
+
+```solidity
+if (!IERC721OperatorRestriction(collection).isOperatorAllowed(address(this))) {
+    // do not list it — rather than find out when the sale settles
+}
+```
+
+[`test/erc721/ExtendedNFT.t.sol`](test/erc721/ExtendedNFT.t.sol) is the existence proof, in the same shape
+as the AMM test: one marketplace holds a valid approval and fails at settlement, and the same marketplace
+one call earlier declines to list.
+
+**The other flag worth the call is `METADATA_MUTABLE`.** Every other declaration describes something that
+happens when value moves. This one describes something that happens while nothing moves: the token stays in
+the same wallet with the same id, and what it *is* changes. Anyone pricing a token rather than merely
+holding it — a lender taking it as collateral, an index weighting a collection — is exposed to an authority
+that can rewrite the traits underneath them, and there is nothing to simulate. `metadataFrozen()` reports
+whether that power has been given up, and because the freeze is one-way it is the only answer in this
+framework that never needs re-reading.
+
+**Two reference collections, not one.** `NON_TRANSFERABLE` and `OPERATOR_RESTRICTED` are a forbidden
+combination — a collection whose transfers always revert has no operator transfer to screen — so
+[`ExtendedNFT`](src/erc721/ExtendedNFT.sol) carries the policy and `SoulboundNFT` carries soulbinding, and
+an assembly installing both fails in its own constructor. Pause and freeze are *not* forbidden alongside
+soulbinding, because they still govern minting. Both declare `MINTABLE | SEIZABLE` unconditionally, which
+on the soulbound one is the useful admission that soulbound here does not mean permanent.
+
+**The verified tier needed no new verification.** [`BERCNFTRuntimeV1`](src/runtime/BERCNFTRuntimeV1.sol) and
+[`BERCNFTFactoryV1`](src/runtime/BERCNFTFactoryV1.sol) give collections the same three-tier ladder tokens
+have, and `BERCVerification` was not touched to make it work — it reads 45 bytes and compares an address,
+and has no opinion about what the code behind that address does. The two runtimes are two pinned addresses
+checked by one library call, and
+[`test/erc721/NFTRuntime.t.sol`](test/erc721/NFTRuntime.t.sol) pins that a collection does not verify
+against the fungible runtime and a token does not verify against the non-fungible one.
+
+**Forked, not shared.** `ERC721ExtensionCore` is a deliberate copy of `ERC20ExtensionCore` rather than a
+generic base extracted from it. The registries are the same idea, the pipelines are not, and genericising
+the fungible core would have re-opened code that has been through four rounds of review to produce a base
+shared in name and forked in substance. What *is* shared is the part with no inheritance in it:
+`BehaviorFlags`, `ExtensionIds` and `BERCVerification`.
 
 ---
 
@@ -349,16 +452,20 @@ src/
   interfaces/            IERC20Extensions, IERC20Behavior, IERC20OnchainMetadata,
                          IERC20TransferFee, IERC20TransferRestriction,
                          IERC20NonTransferable, IERC20TransferHook, IERC20AccountState,
-                         IERC20CheckedTransfer
-  libraries/             BehaviorFlags, ExtensionIds, BERCVerification
+                         IERC20CheckedTransfer, IERC721Behavior, IERC721Extensions,
+                         IERC721OperatorRestriction
+  libraries/             BehaviorFlags, ExtensionIds, BERCVerification — shared by both halves
   extensions/            ERC20ExtensionCore + the five modules
-  runtime/               BERCRuntimeV1, BERCFactoryV1 — the verified tier
+  erc721/                ERC721ExtensionCore, four modules, ExtendedNFT + SoulboundNFT
+  runtime/               BERCRuntimeV1 + BERCFactoryV1, BERCNFTRuntimeV1 + BERCNFTFactoryV1
+                         — the verified tier, one runtime address per token standard
   ExtendedTokenBase.sol  the shared assembly: selectable modules, one role per authority
   ExtendedToken.sol      immutable reference implementation
   ExtendedTokenUpgradeable.sol   UUPS variant, ERC-7201 namespaced
 test/                    unit, fuzz, invariant, integration, runtime, combination matrix
 script/Deploy.s.sol      the two self-declared variants, with role redistribution
 script/DeployRuntime.s.sol   the runtime, its factory, and a canonical token
+script/DeployNFTRuntime.s.sol  the same, for collections
 tools/                   size reporter, combination-matrix generator
 docs/INTEGRATION.md      for people integrating a token built on this
 ```
@@ -441,6 +548,12 @@ Standing checks, all green and all reproducible from this repository:
 
 ### What the self-audit could not cover
 
+- **The non-fungible half came after it.** All four rounds above examined the ERC-20 code, and the tag
+  `v0.1.0-self-audited` marks that commit. Everything under `src/erc721/`, the non-fungible runtime and
+  factory, and the `OPERATOR_RESTRICTED` and `METADATA_MUTABLE` flags were written afterwards and have had
+  no adversarial round of their own. They have tests, full coverage and a lint gate, which is not the same
+  thing — the four rounds above each found defects that tests and types had already passed. Treat the two
+  halves as being at different stages of review, because they are.
 - **No third-party review.** Every round above was conducted by the same people who wrote the code. That is
   a real limit — a self-audit cannot find the assumption everyone involved shares — and it is the reason
   this section exists rather than a one-word status.

@@ -105,6 +105,8 @@ Bit values are in [`BehaviorFlags.sol`](../src/libraries/BehaviorFlags.sol). Cop
 | 6   | `UPGRADEABLE`      | `64`  | The code can be replaced, so every other row can change. §10                  |
 | 7   | `MINTABLE`         | `128` | An authority can create supply and dilute every holder. §11                   |
 | 8   | `SEIZABLE`         | `256` | An authority can destroy any account's balance. §11                           |
+| 9   | `OPERATOR_RESTRICTED` | `512` | ERC-721 only: a transfer can be refused for *who asked for it*. §16        |
+| 10  | `METADATA_MUTABLE` | `1024` | ERC-721 only: an authority can rewrite what a token *is*. §16               |
 
 Bits 0–5 describe the token's own observable behaviour — five of them change what a *transfer* does, and
 `REBASING` shows up instead as a balance that moved with no `Transfer` naming the account. Bits 6–8 describe
@@ -112,6 +114,10 @@ powers an *authority* holds over the token. The second group will never show up 
 why it has to be declared: both reference tokens can mint without limit and burn from any account, so both
 set `MINTABLE | SEIZABLE` even with no extensions installed. A token reporting `0` is claiming it can do
 none of this.
+
+Bits 9 and up are behaviours only a non-fungible token can have, and a fungible one never sets them. One
+vocabulary covers both standards on purpose: you hold one copy of `BehaviorFlags` and read one word, before
+you necessarily know which standard the address in front of you implements. See §16.
 
 Two rules govern the word, and both exist to make caching safe:
 
@@ -653,7 +659,39 @@ is close to free. What is not free is the fee and the hook, and those are exactl
 
 ---
 
-## 16. Checklist
+## 16. Integrating a collection (ERC-721)
+
+**Everything above is written for fungible tokens.** The declaration layer is identical — same selectors,
+same vocabulary, same caching rule — so §1 through §3 apply unchanged, and so does the verification in §2
+once you pin the *non-fungible* runtime address rather than the fungible one. Most of the rest of this guide
+is about fees, amounts and checked transfers, none of which exist for a collection: you cannot withhold 2.5%
+of token #42, and the recipient either receives it or does not.
+
+A dedicated guide for collections is not written yet. Until it is, these are the two questions that have no
+fungible counterpart, and both are answered by a `view` before you commit to anything:
+
+```solidity
+// Before you list anything: can *you* move these tokens?
+// A collection can transfer perfectly for its owner and refuse every transfer you attempt, because the
+// policy screens the caller. Simulating the owner's transfer proves nothing about yours, and the failure
+// surfaces at settlement looking like a bug in your own contract.
+bool canSettle = IERC721OperatorRestriction(collection).isOperatorAllowed(address(myExchange));
+
+// Before you price anything: can the traits change under you?
+// If METADATA_MUTABLE is set and this answers false, the URI you valued the token by can be replaced while
+// the token never moves. The freeze is one-way, so `true` is an answer you never have to read again.
+bool settled = IERC721MutableMetadata(collection).metadataFrozen();
+```
+
+`PAUSABLE`, `BLOCKLIST`, `MINTABLE` and `SEIZABLE` mean on a collection exactly what §8 and §11 say they
+mean on a token, including both asymmetries: a pause does not stop minting or burning, and a burn works on a
+frozen account. `NON_TRANSFERABLE` is §9. `detectTransferRestriction` keeps the same ERC-1404 signature and
+answers about the two *accounts* — it does not answer whether you may be the one moving the token, which is
+what the first call above is for.
+
+---
+
+## 17. Checklist
 
 - [ ] Establish the tier before reading anything else: bytecode against your known runtime for *verified*,
       an answering `behaviorFlags()` for *self-declared*, everything else *unknown*.
