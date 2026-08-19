@@ -5,4 +5,5 @@ docs/build/
 lcov.info
 coverage/
 .env
+.secrets/
 node_modules/
