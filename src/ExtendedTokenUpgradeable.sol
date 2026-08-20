@@ -62,4 +62,10 @@ contract ExtendedTokenUpgradeable is ExtendedTokenBase, UUPSUpgradeable {
 
     /// @inheritdoc UUPSUpgradeable
     function _authorizeUpgrade(address newImplementation) internal virtual override onlyRole(UPGRADER_ROLE) {}
+
+    /// @inheritdoc ExtendedTokenBase
+    function _renounceManagedRoles(address account) internal virtual override {
+        super._renounceManagedRoles(account);
+        _revokeRole(UPGRADER_ROLE, account);
+    }
 }

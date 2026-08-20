@@ -1,8 +1,7 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.24;
 
-import {AccessControlUpgradeable} from "@openzeppelin/contracts-upgradeable/access/AccessControlUpgradeable.sol";
-
+import {BERCAccessControl} from "./access/BERCAccessControl.sol";
 import {ERC20ExtensionCore} from "./extensions/ERC20ExtensionCore.sol";
 import {ERC20OnchainMetadata} from "./extensions/ERC20OnchainMetadata.sol";
 import {ERC20TransferFee} from "./extensions/ERC20TransferFee.sol";
@@ -37,10 +36,11 @@ import {ExtensionIds} from "./libraries/ExtensionIds.sol";
  *      This resembles Token-2022's separate authorities and is **not** equivalent to them, which matters
  *      enough to state plainly rather than let an integrator infer:
  *
- *      - **`DEFAULT_ADMIN_ROLE` can grant itself any of the others.** These are operational roles under a
- *        replaceable admin, not independent authorities. Splitting the keys limits blast radius for an
- *        operator mistake or a single compromised key; it does not bound what the token's owner can do.
- *        Token-2022's authorities can be renounced individually and permanently, and nothing here does.
+ *      - **`DEFAULT_ADMIN_ROLE` can grant itself any of the others until administration is burned.** These
+ *        begin as operational roles under a replaceable admin, not independent authorities. Splitting the
+ *        keys limits blast radius for an operator mistake or a single compromised key; it does not bound
+ *        what the token's admin can do before {burnAdminPrivileges}. After that one-way call, grants and
+ *        forced revocations are disabled globally and each authority may renounce permanently.
  *      - **`SEIZE_ROLE` takes balances, and separating it from `MINT_ROLE` does not make that safe.** The
  *        two are split because they are genuinely different powers and `behaviorFlags()` declares them
  *        separately — a vocabulary finer-grained than the authorities behind it is a vocabulary that
@@ -60,7 +60,7 @@ abstract contract ExtendedTokenBase is
     ERC20TransferFee,
     ERC20TransferRestriction,
     ERC20TransferHook,
-    AccessControlUpgradeable
+    BERCAccessControl
 {
     /// @notice Creates supply. The power `BehaviorFlags.MINTABLE` declares.
     bytes32 public constant MINT_ROLE = keccak256("berc.role.MINT");
@@ -177,6 +177,16 @@ abstract contract ExtendedTokenBase is
      */
     function burn(address from, uint256 value) external virtual onlyRole(SEIZE_ROLE) {
         _burn(from, value);
+    }
+
+    /// @inheritdoc BERCAccessControl
+    function _renounceManagedRoles(address account) internal virtual override {
+        _revokeRole(MINT_ROLE, account);
+        _revokeRole(SEIZE_ROLE, account);
+        _revokeRole(METADATA_ROLE, account);
+        _revokeRole(FEE_CONFIG_ROLE, account);
+        _revokeRole(RESTRICTION_ROLE, account);
+        _revokeRole(HOOK_CONFIG_ROLE, account);
     }
 
     // -----------------------------------------------------------------------------------------------
