@@ -1,9 +1,9 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.24;
 
-import {AccessControlUpgradeable} from "@openzeppelin/contracts-upgradeable/access/AccessControlUpgradeable.sol";
 import {ERC721Upgradeable} from "@openzeppelin/contracts-upgradeable/token/ERC721/ERC721Upgradeable.sol";
 
+import {BERCAccessControl} from "../access/BERCAccessControl.sol";
 import {BehaviorFlags} from "../libraries/BehaviorFlags.sol";
 import {ExtensionIds} from "../libraries/ExtensionIds.sol";
 import {ERC721ExtensionCore} from "./ERC721ExtensionCore.sol";
@@ -26,11 +26,11 @@ import {ERC721ExtensionCore} from "./ERC721ExtensionCore.sol";
  *      enforces royalties it is the one that matters most to an outsider — it decides which marketplaces
  *      can settle a sale at all.
  *
- *      As on the fungible side, these are operational roles under a replaceable admin. `DEFAULT_ADMIN_ROLE`
- *      can grant itself any of them, so splitting the keys bounds one compromised operator and bounds
- *      nothing about the issuer.
+ *      As on the fungible side, these begin as operational roles under a replaceable admin.
+ *      `DEFAULT_ADMIN_ROLE` can grant itself any of them, so splitting the keys bounds one compromised
+ *      operator and bounds nothing about the issuer until {burnAdminPrivileges} locks role management.
  */
-abstract contract ExtendedNFTBase is ERC721ExtensionCore, AccessControlUpgradeable {
+abstract contract ExtendedNFTBase is ERC721ExtensionCore, BERCAccessControl {
     /// @notice Creates tokens. The power `BehaviorFlags.MINTABLE` declares.
     bytes32 public constant MINT_ROLE = keccak256("berc.role.MINT");
 
@@ -87,6 +87,15 @@ abstract contract ExtendedNFTBase is ERC721ExtensionCore, AccessControlUpgradeab
         _burn(tokenId);
     }
 
+    /// @inheritdoc BERCAccessControl
+    function _renounceManagedRoles(address account) internal virtual override {
+        _revokeRole(MINT_ROLE, account);
+        _revokeRole(SEIZE_ROLE, account);
+        _revokeRole(OPERATOR_POLICY_ROLE, account);
+        _revokeRole(RESTRICTION_ROLE, account);
+        _revokeRole(METADATA_ROLE, account);
+    }
+
     /**
      * @inheritdoc ERC721ExtensionCore
      * @dev `super` rejects any extension this collection did not install, so the branches below only ever
@@ -111,7 +120,7 @@ abstract contract ExtendedNFTBase is ERC721ExtensionCore, AccessControlUpgradeab
         public
         view
         virtual
-        override(ERC721Upgradeable, AccessControlUpgradeable)
+        override(ERC721Upgradeable, BERCAccessControl)
         returns (bool)
     {
         return super.supportsInterface(interfaceId);
