@@ -460,13 +460,14 @@ question and the one an integrator is more often surprised by.
 | `HOOK_CONFIG_ROLE` | Install, replace or remove the transfer hook | `setTransferHook` |
 | `METADATA_ROLE` | Write the on-chain store and the token URI | `setMetadata`, `removeMetadata`, `setTokenURI` |
 | `UPGRADER_ROLE` | Replace the implementation — `UPGRADEABLE` tokens only | `upgradeToAndCall` |
-| `DEFAULT_ADMIN_ROLE` | **Grant or revoke every role above, including itself** | `grantRole`, `revokeRole` |
+| `DEFAULT_ADMIN_ROLE` | **Grant or revoke every role above, including itself, until burned** | `grantRole`, `revokeRole`, `burnAdminPrivileges` |
 
 Three consequences worth internalising:
 
-- **The split is operational, not structural.** `DEFAULT_ADMIN_ROLE` can hand itself any other role, so
-  "the fee key is separate from the freeze key" limits an operator error, not the owner. Check who holds
-  `DEFAULT_ADMIN_ROLE` before you rely on any other separation.
+- **The split is operational until administration is burned.** `DEFAULT_ADMIN_ROLE` can hand itself any
+  other role, so "the fee key is separate from the freeze key" limits an operator error, not the owner.
+  `adminPrivilegesBurned() == true` is the stronger state: `grantRole` and administrator-driven
+  `revokeRole` then revert for everyone, including admins granted before the burn.
 - **`SEIZE_ROLE` can burn a counterparty's balance.** If you lend against this token, a frozen borrower's
   collateral can be burned out from under your position; treat `accountState(borrower).frozen` as a
   liquidation-relevant signal rather than only a transfer-time check. `MINT_ROLE` is a separate key and
@@ -474,8 +475,16 @@ Three consequences worth internalising:
 - **You cannot enumerate role holders.** `hasRole(role, account)` answers about an address you already
   suspect; building the full list means replaying `RoleGranted` and `RoleRevoked`.
 
-`hasRole` is the check to run against a specific address. For a token you are onboarding, the question to
-ask its issuer is whether `DEFAULT_ADMIN_ROLE` and `UPGRADER_ROLE` sit behind a timelock.
+`hasRole` is the check to run against a specific address. `adminPrivilegesBurned()` is separately
+discoverable through ERC-165's `IBERCAccessControl` interface. After the global burn,
+`hasRole(DEFAULT_ADMIN_ROLE, account)` is false for every account, including an admin granted before the
+burn. Existing operational authorities are not removed by the burn: each can call
+`renounceRole`, or `renounceAllRoles()` to drop every built-in role it holds in one transaction.
+
+For a token you are onboarding, ask whether administration has been burned; if not, ask whether
+`DEFAULT_ADMIN_ROLE` and `UPGRADER_ROLE` sit behind a timelock. On an `UPGRADEABLE` token, an upgrader can
+replace the implementation and therefore every guarantee in this section. Treat the burn as durable only
+after the upgrade authority is also gone, or use a verified runtime clone with no upgrade path.
 
 ---
 
@@ -707,8 +716,8 @@ what the first call above is for.
       counterparty as a risk signal, because its balance can be burned.
 - [ ] `NON_TRANSFERABLE`: do not list.
 - [ ] `UPGRADEABLE`: check who holds `UPGRADER_ROLE` before relying on anything above.
-- [ ] Check who holds `DEFAULT_ADMIN_ROLE` (§11). It can grant itself every other role, so no other
-      separation of keys means anything until you have answered this one.
+- [ ] Read `adminPrivilegesBurned()` and check `DEFAULT_ADMIN_ROLE` (§11). Until the burn, an admin can
+      grant itself every other role, so no other separation of keys is structural.
 - [ ] If you lend against the token, treat `SEIZE_ROLE` as able to burn your collateral.
 - [ ] `MINTABLE` / `SEIZABLE`: assume supply can grow and balances can vanish without a `transfer` you
       could have screened. Neither is visible in a simulation.

@@ -218,26 +218,42 @@ nothing about roles — they
 call a single `_authorizeExtensionConfig(bytes4)` dispatch, so a different assembly can swap in `Ownable`, a
 timelock or a governor without touching them.
 
-**These are operational roles under a replaceable admin, not Token-2022's independent authorities.** The
-resemblance is real and the difference is load-bearing, so it is worth being exact about:
+**These are operational roles under a replaceable admin until administration is burned.** The resemblance
+to Token-2022 is real, and the lifecycle difference is load-bearing, so it is worth being exact about:
 
 | | Token-2022 | here |
 | --- | --- | --- |
 | Separate key per capability | yes | yes |
-| An authority can be renounced permanently | yes | no — `DEFAULT_ADMIN_ROLE` can re-grant anything |
+| An authority can be renounced permanently | yes | yes — after `burnAdminPrivileges()` disables re-grants |
 | Mint and seizure are separate | yes | yes — `MINT_ROLE` and `SEIZE_ROLE` |
 | Holders enumerable on chain | n/a | no — reconstruct from `RoleGranted` / `RoleRevoked` |
 
-So splitting the keys bounds the damage from one compromised operator, and does not bound what the token's
-owner can do. `SEIZE_ROLE` in particular burns from any account, which is a seizure power, and it exists
+Before the burn, splitting the keys bounds the damage from one compromised operator and does not bound what
+the token's admin can do. `SEIZE_ROLE` in particular burns from any account, which is a seizure power, and it exists
 because a freeze that blocked burning could never be settled (see the flow table in
 [`docs/INTEGRATION.md`](docs/INTEGRATION.md)). It also covers burning a balance its own holder controls,
 since there is no permissionless self-burn here — a treasury retiring its own tokens holds `SEIZE_ROLE`.
 
+Two calls expose the irreversible lifecycle explicitly through [`IBERCAccessControl`](src/interfaces/IBERCAccessControl.sol):
+
+- `burnAdminPrivileges()` requires `DEFAULT_ADMIN_ROLE`, permanently disables both `grantRole` and
+  administrator-driven `revokeRole` for everyone, and removes the caller's admin role. It is a global burn,
+  so even a second admin granted before the call cannot restore an authority. Effective
+  `DEFAULT_ADMIN_ROLE` membership reads false for every address after the burn, closing direct admin gates
+  in derived assemblies too. Existing operational role holders keep working and can still renounce themselves.
+- `renounceAllRoles()` atomically removes every built-in role held by the caller. On
+  `ExtendedTokenUpgradeable` that includes `UPGRADER_ROLE`; on ERC-721 it includes all five collection
+  authorities. Calling it alone is not a global admin burn if another admin exists.
+
+`adminPrivilegesBurned()` is the durable on-chain fact an integrator can read. Because role holders remain
+non-enumerable, proving that every *operational* authority is gone still requires replaying role events.
+On the UUPS variant, any promise remains only as durable as `UPGRADER_ROLE`; renounce that role (or use a
+runtime clone) before treating the burn as code-level immutability.
+
 Recommended posture for a deployment anyone else is expected to integrate with:
 
 - `DEFAULT_ADMIN_ROLE` on a multisig behind a timelock, never on an EOA — it is the role that can undo every
-  other split;
+  other split — or burn it once the role layout is final;
 - each operational role on its own key, which [`script/Deploy.s.sol`](script/Deploy.s.sol) does, asserts,
   and refuses to do to the zero address. That last check has to live in the script: it initialises the token
   with the broadcaster so it can configure it before handing the roles over, so the token's own zero-admin
@@ -259,12 +275,12 @@ Nothing in this section is estimated.
 
 | Contract                   | bytes  | of the 24,576 limit | free   |
 | -------------------------- | ------ | ------------------- | ------ |
-| `ExtendedTokenUpgradeable` | 20,066 | 81.6%               | 4,510  |
-| `BERCRuntimeV1`            | 18,076 | 73.6%               | 6,500  |
-| `ExtendedToken`            | 15,442 | 62.8%               | 9,134  |
-| `BERCNFTRuntimeV1`         | 13,202 | 53.7%               | 11,374 |
-| `ExtendedNFT`              | 10,587 | 43.1%               | 13,989 |
-| `SoulboundNFT`             | 9,855  | 40.1%               | 14,721 |
+| `ExtendedTokenUpgradeable` | 20,604 | 83.8%               | 3,972  |
+| `BERCRuntimeV1`            | 18,571 | 75.6%               | 6,005  |
+| `ExtendedToken`            | 16,201 | 65.9%               | 8,375  |
+| `BERCNFTRuntimeV1`         | 13,729 | 55.9%               | 10,847 |
+| `ExtendedNFT`              | 11,334 | 46.1%               | 13,242 |
+| `SoulboundNFT`             | 10,558 | 43.0%               | 14,018 |
 | `BERCFactoryV1`            | 4,195  | 17.1%               | 20,381 |
 | `BERCNFTFactoryV1`         | 4,075  | 16.6%               | 20,501 |
 
@@ -292,7 +308,7 @@ What is not free is the fee and the hook — and those are precisely what `behav
 
 ### Tests — `forge test`
 
-334 tests, all passing.
+342 tests, all passing.
 
 | Suite | What it establishes |
 | --- | --- |
@@ -300,6 +316,7 @@ What is not free is the fee and the hook — and those are precisely what `behav
 | [`AmmIntegration`](test/integration/AmmIntegration.t.sol) | The naive router fails on `K`; the extension-aware one succeeds three ways, and a fourth that knows nothing about fees succeeds using only a checked transfer. The project's reason for existing. |
 | [`Verification`](test/runtime/Verification.t.sol) | Clones of the runtime verify, including ones the factory never made. EOAs, plain ERC-20s, self-declared tokens, clones of other implementations, and 45-byte impostors with one byte changed all fail. |
 | [`Factory`](test/runtime/Factory.t.sol) | Forbidden combinations, duplicates and unknown IDs are rejected; the admin ends with every role and the factory with none; deterministic addresses match their prediction and cannot be squatted across deployers. |
+| [`AdminBurn`](test/AdminBurn.t.sol) | The one-way administration burn cannot be bypassed by a second pre-existing admin; operational holders can still self-renounce; ERC-20, ERC-721 and UUPS role sets are removed atomically. |
 | [`Runtime`](test/runtime/Runtime.t.sol) | Uninstalled modules stay inert, `NON_TRANSFERABLE` blocks only tokens that asked for it, and a token cannot be configured into an extension its own `extensions()` denies. |
 | [`CheckedTransfer`](test/CheckedTransfer.t.sol) | Fuzzed: either the floor holds or nothing moves. Every transfer-affecting setter advances the configuration epoch, and metadata deliberately does not. |
 | [`TransferFee`](test/TransferFee.t.sol) | Fuzzed: `computeFee` equals debited minus credited for any amount; `transferExactOut` delivers exactly, and its input is minimal across the whole `uint256` range including the edges where the uncapped inverse does not fit; `maximumFee` bounds every fee and is reached wherever the rate can produce it. |
@@ -449,6 +466,7 @@ then reports the contract as missing. It is called `ERC20TransfersNotSupported`.
 
 ```
 src/
+  access/                one-way administration burn and atomic role renunciation
   interfaces/            IERC20Extensions, IERC20Behavior, IERC20OnchainMetadata,
                          IERC20TransferFee, IERC20TransferRestriction,
                          IERC20NonTransferable, IERC20TransferHook, IERC20AccountState,
