@@ -1,5 +1,7 @@
 # BERC — a modular token extension framework
 
+CA : 0xd53762e9a44118dc61a3ab7012c3cc4a899a8927
+
 Inspired by Solana's Token-2022, built for a chain that has no shared runtime to lean on. *Inspired by* is
 the exact claim: this is not compatible with Token-2022 and does not reproduce its semantics. Its fee
 extension withholds into the recipient's account and separates the key that configures the fee from the key
